@@ -1,0 +1,122 @@
+{
+    "5208JJ1024A": {
+        "descripcion": "DUCT R/L",
+        "linea": "maquina 01",
+        "id": "assy",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    },
+    "MCZ60014601": {
+        "descripcion": "DUCT U/R",
+        "linea": "maquina 02",
+        "id": "assy",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    },
+    "MAL62484101": {
+        "descripcion": "BARRIER INS C",
+        "linea": "maquina 03",
+        "id": "assy",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    },
+    "MAL62524101": {
+        "descripcion": "BARRIER INS C",
+        "linea": "maquina 04",
+        "id": "assy",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    },
+    "MAL62524201": {
+        "descripcion": "BARRIER INS C",
+        "linea": "maquina 05",
+        "id": "assy",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    },
+    "8001139797": {
+        "descripcion": "Flip Mullion Insulation up 914",
+        "linea": "maquina 11",
+        "id": "Assy",
+        "qtu": "45",
+        "linea_lg": "BOSCH",
+        "ayuda_visual": ""
+    },
+    "8001139801": {
+        "descripcion": "Flip Mullion Insulation bottom914",
+        "linea": "maquina 12",
+        "id": "Assy",
+        "qtu": "45",
+        "linea_lg": "BOSCH",
+        "ayuda_visual": ""
+    },
+    "8001197448": {
+        "descripcion": "EPS glass shelves fixation KFD94 bottom",
+        "linea": "maquina 13",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "BOSCH",
+        "ayuda_visual": ""
+    },
+    "8001259203": {
+        "descripcion": "INSULATION",
+        "linea": "maquina 14",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "BOSCH",
+        "ayuda_visual": ""
+    },
+    "8001047798": {
+        "descripcion": "EPS rear corner pads FDBM KFN86",
+        "linea": "maquina 15",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "BOSCH",
+        "ayuda_visual": ""
+    },
+    "43920JL2047B": {
+        "descripcion": "RAPTOR2, RAPTOR ",
+        "linea": "maquina 09",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "R2",
+        "ayuda_visual": ""
+    },
+    "3920JL2047B": {
+        "descripcion": "RAPTOR2, RAPTOR 4 ",
+        "linea": "maquina 09",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "R2",
+        "ayuda_visual": ""
+    },
+    "MFZ62834301": {
+        "descripcion": "RAPTOR, QUANTUM B",
+        "linea": "maquina 10",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "R2",
+        "ayuda_visual": ""
+    },
+    "MFZ63765502": {
+        "descripcion": "OMEGA 2M",
+        "linea": "maquina 07",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    },
+    "MFZ64356801": {
+        "descripcion": "OMEGA 6M",
+        "linea": "maquina 08",
+        "id": "Packing",
+        "qtu": "45",
+        "linea_lg": "R1",
+        "ayuda_visual": ""
+    }
+}

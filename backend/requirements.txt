@@ -1,0 +1,10 @@
+# Backend - Sistema de Etiquetas
+# Dependencias de Python para la API FastAPI
+
+fastapi
+uvicorn[standard]
+pydantic
+pandas
+openpyxl
+reportlab
+python-multipart
