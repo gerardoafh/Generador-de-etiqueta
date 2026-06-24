@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import WebQRScanner from './WebQRScanner';
 import { apiFetch } from '../api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useConfirm } from '../hooks/useConfirm.jsx';
@@ -42,8 +43,9 @@ export default function DryingRoom({ goBack }) {
   const [partData, setPartData] = useState({}); // Para almacenar los datos de las partes del backend
   const [scanMode, setScanMode] = useState('ENTRADA');
   const [qrCode, setQrCode] = useState('');
+  const [isScannerOpen, setIsScannerOpen] = useState(false);
   const [records, setRecords] = useState([]);
-  
+
   // Variables de control y acumulados por turno
   const [acumuladoPorParte, setAcumuladoPorParte] = useState({});
   const [contadorCarritos, setContadorCarritos] = useState({});
@@ -169,22 +171,23 @@ export default function DryingRoom({ goBack }) {
   // Referencia para acceder a la última versión de la función en el setTimeout
   const handleScanRef = useRef();
 
-  const handleScan = (e) => {
+  const handleScan = (e, overrideCodigo = null, overrideMode = null) => {
     if (e) e.preventDefault();
-    const codigo = qrCode.trim().toUpperCase();
+    const codigo = (overrideCodigo || qrCode).trim().toUpperCase();
     if (!codigo) return;
-    
+
     const partInfo = partData[codigo];
     if (!partInfo) {
       showToast(`Parte "${codigo}" no registrada en la base de datos.`, 'error');
-      setQrCode('');
+      if (!overrideCodigo) setQrCode('');
       return;
     }
 
+    const currentMode = overrideMode || scanMode;
     const qtyNum = Number(partInfo.qtu) || 0;
     const ahora = new Date();
-    
-    if (scanMode === 'ENTRADA') {
+
+    if (currentMode === 'ENTRADA') {
       // Lógica de ENTRADA
       // #2 — ID único basado en timestamp
       const nuevoId = generarIdCarrito();
@@ -214,7 +217,7 @@ export default function DryingRoom({ goBack }) {
     } else {
       // Lógica de SALIDA (FIFO)
       const index = [...records].reverse().findIndex(r => r.numeroParte === codigo && r.estado === 'EN SECADO');
-      
+
       if (index === -1) {
         showToast(`No hay carritos de "${codigo}" en secado actualmente.`, 'error');
       } else {
@@ -252,13 +255,62 @@ export default function DryingRoom({ goBack }) {
         }
       }
     }
-    setQrCode('');
+    if (!overrideCodigo) setQrCode('');
   };
 
   // Actualizar referencia de handleScan en cada renderizado
   useEffect(() => {
     handleScanRef.current = handleScan;
   });
+
+  // Handler para el éxito del escáner web
+  const handleWebScanSuccess = (decodedText) => {
+    setIsScannerOpen(false); // Cerrar el modal
+
+    // Extraer número de parte usando lógica similar a la del bot
+    let extractedPart = decodedText.trim().toUpperCase();
+    const match = extractedPart.match(/(?:PART\s*)?NUMBER\s*[:\|]?\s*([A-Z0-9]{5,20})/i);
+    if (match) {
+      extractedPart = match[1];
+    }
+
+    if (handleScanRef.current) {
+      handleScanRef.current(null, extractedPart);
+    }
+  };
+
+  // NUEVO: Polling de la cola de acciones de Telegram (cada 3 segundos)
+  useEffect(() => {
+    if (!isStateLoaded) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiFetch("/telegram-queue");
+        if (res.ok) {
+          const data = await res.json();
+          if (data.actions && data.actions.length > 0) {
+            const act = data.actions[0];
+            // Remover la acción procesada
+            await apiFetch("/telegram-queue/clear", {
+              method: "POST",
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ actions: data.actions.slice(1) })
+            });
+            // Ejecutar la acción
+            if (handleScanRef.current) {
+              // Pequeño retardo visual para que parezca que "llegó"
+              setTimeout(() => {
+                showToast(`🤖 Comando de Telegram recibido: ${act.action} - ${act.codigo}`, 'info', 3000);
+                handleScanRef.current(null, act.codigo, act.action);
+              }, 500);
+            }
+          }
+        }
+      } catch (err) {
+        // Ignorar errores de red temporales
+      }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isStateLoaded]);
 
   // Auto-submit (Enter automático) tras detectar que el escáner terminó de escribir
   useEffect(() => {
@@ -345,7 +397,11 @@ export default function DryingRoom({ goBack }) {
   const recordsActivos = records.filter(r => r.estado === 'EN SECADO');
   const recordsHistorial = records.filter(r => r.estado === 'FINALIZADO');
   const datosVista = viendoHistorial ? recordsHistorial : recordsActivos;
-  
+
+  // KPIs del turno actual únicamente
+  const entradasTurnoActual = records.filter(r => r.turno === turnoActual);
+  const salidasTurnoActual  = recordsHistorial.filter(r => r.turno === turnoActual);
+
   // Contar cuántos carritos se quedaron del turno anterior
   const carritosTurnoAnterior = recordsActivos.filter(r => r.turno !== turnoActual).length;
 
@@ -428,19 +484,15 @@ export default function DryingRoom({ goBack }) {
         </div>
 
         {/* KPI: Vencidos */}
-        <div className={`rounded-2xl p-6 shadow-sm border flex items-center gap-5 hover:shadow-md transition-shadow ${
-          carritosVencidos > 0 ? 'bg-red-50 border-red-300 animate-pulse' : 'bg-white border-slate-200'
-        }`}>
-          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-inner ${
-            carritosVencidos > 0 ? 'bg-red-200' : 'bg-slate-100'
-          }`}>⏰</div>
+        <div className={`rounded-2xl p-6 shadow-sm border flex items-center gap-5 hover:shadow-md transition-shadow ${carritosVencidos > 0 ? 'bg-red-50 border-red-300 animate-pulse' : 'bg-white border-slate-200'
+          }`}>
+          <div className={`w-14 h-14 rounded-2xl flex items-center justify-center text-2xl shadow-inner ${carritosVencidos > 0 ? 'bg-red-200' : 'bg-slate-100'
+            }`}>⏰</div>
           <div>
-            <p className={`text-sm font-semibold uppercase tracking-wider mb-1 ${
-              carritosVencidos > 0 ? 'text-red-600' : 'text-slate-500'
-            }`}>Tiempo Vencido</p>
-            <p className={`text-3xl font-extrabold ${
-              carritosVencidos > 0 ? 'text-red-700' : 'text-slate-400'
-            }`}>{carritosVencidos} <span className="text-sm font-normal">carritos</span></p>
+            <p className={`text-sm font-semibold uppercase tracking-wider mb-1 ${carritosVencidos > 0 ? 'text-red-600' : 'text-slate-500'
+              }`}>Tiempo Vencido</p>
+            <p className={`text-3xl font-extrabold ${carritosVencidos > 0 ? 'text-red-700' : 'text-slate-400'
+              }`}>{carritosVencidos} <span className="text-sm font-normal">carritos</span></p>
             {maxDryingMins === 0 && <p className="text-xs text-slate-400 mt-1">Alerta desactivada</p>}
           </div>
         </div>
@@ -449,14 +501,16 @@ export default function DryingRoom({ goBack }) {
           <div className="w-14 h-14 rounded-2xl bg-green-100 flex items-center justify-center text-2xl shadow-inner">📥</div>
           <div>
             <p className="text-slate-500 text-sm font-semibold uppercase tracking-wider mb-1">Entradas Totales</p>
-            <p className="text-3xl font-extrabold text-slate-800">{records.length} <span className="text-sm font-normal text-slate-400">lotes</span></p>
+            <p className="text-3xl font-extrabold text-slate-800">{entradasTurnoActual.length} <span className="text-sm font-normal text-slate-400">lotes</span></p>
+            <p className="text-xs text-slate-400 mt-0.5">Turno {turnoActual}</p>
           </div>
         </div>
         <div className="bg-white rounded-2xl p-6 shadow-sm border border-slate-200 flex items-center gap-5 hover:shadow-md transition-shadow">
           <div className="w-14 h-14 rounded-2xl bg-blue-100 flex items-center justify-center text-2xl shadow-inner">📤</div>
           <div>
             <p className="text-slate-500 text-sm font-semibold uppercase tracking-wider mb-1">Salidas Completadas</p>
-            <p className="text-3xl font-extrabold text-slate-800">{recordsHistorial.length} <span className="text-sm font-normal text-slate-400">lotes</span></p>
+            <p className="text-3xl font-extrabold text-slate-800">{salidasTurnoActual.length} <span className="text-sm font-normal text-slate-400">lotes</span></p>
+            <p className="text-xs text-slate-400 mt-0.5">Turno {turnoActual}</p>
           </div>
         </div>
       </div>
@@ -465,11 +519,11 @@ export default function DryingRoom({ goBack }) {
       <div className={`max-w-[1400px] mx-auto bg-white rounded-2xl shadow-sm border-2 p-8 mb-8 flex flex-col items-center relative overflow-hidden transition-colors duration-300 ${scanMode === 'ENTRADA' ? 'border-green-200' : 'border-red-200'}`}>
         {/* Background Highlight (Línea superior de color) */}
         <div className={`absolute top-0 left-0 w-full h-2 ${scanMode === 'ENTRADA' ? 'bg-green-500' : 'bg-red-500'}`}></div>
-        
+
         <h3 className="font-bold text-slate-700 mb-6 tracking-wide uppercase text-sm flex items-center gap-2">
           <span className="text-xl">📻</span> Modo de Operación Activo
         </h3>
-        
+
         {/* Segmented Control */}
         <div className="flex bg-slate-100 p-1 rounded-xl mb-8 w-full max-w-md">
           <button
@@ -488,25 +542,44 @@ export default function DryingRoom({ goBack }) {
           </button>
         </div>
 
-        <form onSubmit={handleScan} className="w-full max-w-2xl relative">
-          <span className="absolute inset-y-0 left-6 flex items-center text-3xl text-slate-300">
-            {scanMode === 'ENTRADA' ? '📥' : '📤'}
-          </span>
-          <input 
-            type="text" 
-            placeholder="ESCANEAR CÓDIGO (N° PARTE)" 
-            value={qrCode}
-            onChange={(e) => setQrCode(e.target.value)}
-            ref={inputRef}
-            className={`w-full text-center text-3xl font-mono pl-16 p-6 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:bg-white outline-none transition-all placeholder:text-slate-300 ${scanMode === 'ENTRADA' ? 'focus:border-green-500 focus:ring-4 focus:ring-green-500/20' : 'focus:border-red-500 focus:ring-4 focus:ring-red-500/20'}`}
-          />
-          <p className="text-center text-slate-400 mt-4 text-sm">El escáner enviará el código automáticamente.</p>
+        <form onSubmit={handleScan} className="w-full max-w-3xl flex flex-col items-center">
+          <div className="flex flex-col md:flex-row w-full gap-4 relative">
+            <div className="relative flex-1">
+              <span className="absolute inset-y-0 left-6 flex items-center text-3xl text-slate-300 pointer-events-none">
+                {scanMode === 'ENTRADA' ? '📥' : '📤'}
+              </span>
+              <input
+                type="text"
+                placeholder="ESCANEAR CÓDIGO (N° PARTE)"
+                value={qrCode}
+                onChange={(e) => setQrCode(e.target.value)}
+                ref={inputRef}
+                className={`w-full h-full text-center text-2xl md:text-3xl font-mono pl-16 p-6 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:bg-white outline-none transition-all placeholder:text-slate-300 ${scanMode === 'ENTRADA' ? 'focus:border-green-500 focus:ring-4 focus:ring-green-500/20' : 'focus:border-red-500 focus:ring-4 focus:ring-red-500/20'}`}
+              />
+            </div>
+            
+            <button
+              type="button"
+              onClick={() => setIsScannerOpen(true)}
+              className="px-8 py-5 bg-slate-800 text-white font-bold text-lg md:text-xl rounded-2xl hover:bg-slate-700 transition-transform active:scale-95 flex lg:hidden items-center justify-center gap-3 shadow-lg whitespace-nowrap"
+            >
+              <span className="text-2xl">📷</span> <span>Escanear QR</span>
+            </button>
+          </div>
+          <p className="text-center text-slate-400 mt-4 text-sm font-medium">Usa la pistola física de código de barras<span className="lg:hidden"> o escanea con la cámara del dispositivo</span>.</p>
         </form>
       </div>
 
+      {isScannerOpen && (
+        <WebQRScanner 
+          onScanSuccess={handleWebScanSuccess} 
+          onClose={() => setIsScannerOpen(false)} 
+        />
+      )}
+
       {/* Sección Tabla con Filtros */}
       <div className="max-w-[1400px] mx-auto bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
-        
+
         {/* Barra de Filtros */}
         <div className="p-5 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-center justify-between">
           <div className="flex flex-wrap items-center gap-4">
@@ -516,18 +589,18 @@ export default function DryingRoom({ goBack }) {
 
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-slate-500">Fecha:</label>
-              <input 
-                type="date" 
+              <input
+                type="date"
                 value={filtroFecha}
                 onChange={(e) => setFiltroFecha(e.target.value)}
                 className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
               />
             </div>
-            
+
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-slate-500">N° Parte:</label>
-              <input 
-                type="text" 
+              <input
+                type="text"
                 value={filtroParte}
                 onChange={(e) => setFiltroParte(e.target.value)}
                 placeholder="Buscar..."
@@ -537,7 +610,7 @@ export default function DryingRoom({ goBack }) {
 
             <div className="flex items-center gap-2">
               <label className="text-sm font-medium text-slate-500">Máquina:</label>
-              <select 
+              <select
                 value={filtroMaquina}
                 onChange={(e) => setFiltroMaquina(e.target.value)}
                 className="border border-slate-300 rounded-lg px-3 py-1.5 text-sm focus:ring-2 focus:ring-blue-500 outline-none"
@@ -545,7 +618,7 @@ export default function DryingRoom({ goBack }) {
                 {maquinasUnicas.map(m => <option key={m} value={m}>{m}</option>)}
               </select>
             </div>
-            
+
             {(filtroParte || filtroMaquina !== 'TODAS' || filtroFecha) && (
               <button type="button" onClick={() => { setFiltroParte(''); setFiltroMaquina('TODAS'); setFiltroFecha(''); }} className="text-sm text-blue-600 hover:underline">Limpiar Filtros</button>
             )}
@@ -568,12 +641,10 @@ export default function DryingRoom({ goBack }) {
               <tr className="bg-white text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
                 <th className="p-4 font-medium text-center">Fecha</th>
                 <th className="p-4 font-medium text-center">Turno</th>
-                <th className="p-4 font-medium text-center">ID</th>
                 <th className="p-4 font-medium text-center">N° Parte</th>
                 <th className="p-4 font-medium text-left">Descripción</th>
                 <th className="p-4 font-medium text-center">Máquina</th>
                 <th className="p-4 font-medium text-center">Qty</th>
-                <th className="p-4 font-medium text-center">Acum.</th>
                 <th className="p-4 font-medium text-center">Estado</th>
                 <th className="p-4 font-medium text-center">Entrada</th>
                 <th className="p-4 font-medium text-center">Salida</th>
@@ -588,43 +659,40 @@ export default function DryingRoom({ goBack }) {
                 const esVencido = maxDryingMins > 0 && minsEnSecado !== null && minsEnSecado >= maxDryingMins;
                 const esRezago = row.turno !== turnoActual && row.estado === 'EN SECADO';
                 return (
-                <tr key={row.idCarrito || idx} className={`hover:bg-slate-50 transition-colors ${
-                  esVencido ? 'bg-red-100 border-l-4 border-l-red-500' : esRezago ? 'bg-red-50/50' : ''
-                }`}>
-                  <td className="p-4 text-center text-slate-500 text-sm">{formatDate(row.horaEntrada)}</td>
-                  <td className="p-4 text-center font-semibold text-slate-500 text-xs">
-                    {row.turno}
-                    {esVencido && (
-                      <span className="block text-[10px] text-red-700 font-bold mt-1">🔴 VENCIDO</span>
-                    )}
-                    {!esVencido && esRezago && (
-                      <span className="block text-[10px] text-red-600 font-bold mt-1">⚠️ REZAGO</span>
-                    )}
-                  </td>
-                  <td className="p-4 text-center font-bold text-slate-900">{row.idCarrito}</td>
-                  <td className="p-4 text-center text-slate-700 font-mono text-sm">{row.numeroParte}</td>
-                  <td className="p-4 text-left text-slate-600 text-sm truncate max-w-[150px]" title={row.descripcion}>{row.descripcion}</td>
-                  <td className="p-4 text-center text-slate-600 text-sm">{row.maquina}</td>
-                  <td className="p-4 text-center font-medium text-blue-600">{row.qty}</td>
-                  <td className="p-4 text-center font-bold text-indigo-600">{row.acumulado}</td>
-                  <td className="p-4 flex justify-center">
-                    <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1.5 ${row.estado === 'EN SECADO' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
-                      {row.estado === 'EN SECADO' && <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>}
-                      {row.estado === 'FINALIZADO' && <span className="w-2 h-2 rounded-full bg-green-500"></span>}
-                      {row.estado}
-                    </span>
-                  </td>
-                  <td className="p-4 text-center text-slate-500 text-sm">{formatTime(row.horaEntrada)}</td>
-                  <td className="p-4 text-center text-slate-500 text-sm">{formatTime(row.horaSalida)}</td>
-                  {/* #8 — Tiempo en vivo para carritos EN SECADO */}
-                  <td className="p-4 text-slate-500 text-center font-mono text-sm">
-                    {row.tiempoMinutos
-                      ? `${row.tiempoMinutos} min`
-                      : row.estado === 'EN SECADO' && row.horaEntrada
-                        ? <LiveTimer horaEntrada={row.horaEntrada} maxMins={maxDryingMins} />
-                        : '-'}
-                  </td>
-                </tr>
+                  <tr key={row.idCarrito || idx} className={`hover:bg-slate-50 transition-colors ${esVencido ? 'bg-red-100 border-l-4 border-l-red-500' : esRezago ? 'bg-red-50/50' : ''
+                    }`}>
+                    <td className="p-4 text-center text-slate-500 text-sm">{formatDate(row.horaEntrada)}</td>
+                    <td className="p-4 text-center font-semibold text-slate-500 text-xs">
+                      {row.turno}
+                      {esVencido && (
+                        <span className="block text-[10px] text-red-700 font-bold mt-1">🔴 VENCIDO</span>
+                      )}
+                      {!esVencido && esRezago && (
+                        <span className="block text-[10px] text-red-600 font-bold mt-1">⚠️ REZAGO</span>
+                      )}
+                    </td>
+                    <td className="p-4 text-center text-slate-700 font-mono text-sm">{row.numeroParte}</td>
+                    <td className="p-4 text-left text-slate-600 text-sm truncate max-w-[150px]" title={row.descripcion}>{row.descripcion}</td>
+                    <td className="p-4 text-center text-slate-600 text-sm">{row.maquina}</td>
+                    <td className="p-4 text-center font-medium text-blue-600">{row.qty}</td>
+                    <td className="p-4 flex justify-center">
+                      <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1.5 ${row.estado === 'EN SECADO' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>
+                        {row.estado === 'EN SECADO' && <span className="w-2 h-2 rounded-full bg-orange-500 animate-pulse"></span>}
+                        {row.estado === 'FINALIZADO' && <span className="w-2 h-2 rounded-full bg-green-500"></span>}
+                        {row.estado}
+                      </span>
+                    </td>
+                    <td className="p-4 text-center text-slate-500 text-sm">{formatTime(row.horaEntrada)}</td>
+                    <td className="p-4 text-center text-slate-500 text-sm">{formatTime(row.horaSalida)}</td>
+                    {/* #8 — Tiempo en vivo para carritos EN SECADO */}
+                    <td className="p-4 text-slate-500 text-center font-mono text-sm">
+                      {row.tiempoMinutos
+                        ? `${row.tiempoMinutos} min`
+                        : row.estado === 'EN SECADO' && row.horaEntrada
+                          ? <LiveTimer horaEntrada={row.horaEntrada} maxMins={maxDryingMins} />
+                          : '-'}
+                    </td>
+                  </tr>
                 );
               })}
               {datosFiltrados.length === 0 && (
@@ -703,9 +771,9 @@ function TimeAnalysisPanel({ records }) {
 
   // Semáforo: variabilidad baja (<10min stddev) = verde, media = amarillo, alta = rojo
   const getVariabilityColor = (stdDev) => {
-    if (stdDev < 5)  return { bg: 'bg-green-100',  text: 'text-green-700',  label: 'Estable' };
+    if (stdDev < 5) return { bg: 'bg-green-100', text: 'text-green-700', label: 'Estable' };
     if (stdDev < 15) return { bg: 'bg-yellow-100', text: 'text-yellow-700', label: 'Variable' };
-    return              { bg: 'bg-red-100',    text: 'text-red-700',    label: 'Inestable' };
+    return { bg: 'bg-red-100', text: 'text-red-700', label: 'Inestable' };
   };
 
   return (
@@ -713,10 +781,10 @@ function TimeAnalysisPanel({ records }) {
       {/* Resumen global */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-0 border-b border-slate-100">
         {[
-          { label: 'Partes analizadas', value: stats.length,        icon: '🔬' },
-          { label: 'Total muestras',    value: finished.length,     icon: '📋' },
-          { label: 'Promedio global',   value: `${(finished.reduce((s,r)=>s+parseFloat(r.tiempoMinutos),0)/finished.length).toFixed(1)} min`, icon: '⏱' },
-          { label: 'Salidas anticipadas',value: finished.filter(r=>r.earlyExit).length, icon: '⚠️' },
+          { label: 'Partes analizadas', value: stats.length, icon: '🔬' },
+          { label: 'Total muestras', value: finished.length, icon: '📋' },
+          { label: 'Promedio global', value: `${(finished.reduce((s, r) => s + parseFloat(r.tiempoMinutos), 0) / finished.length).toFixed(1)} min`, icon: '⏱' },
+          { label: 'Salidas anticipadas', value: finished.filter(r => r.earlyExit).length, icon: '⚠️' },
         ].map((kpi, i) => (
           <div key={i} className="p-5 border-r border-slate-100 last:border-r-0">
             <p className="text-slate-400 text-xs font-semibold uppercase tracking-wider mb-1">{kpi.icon} {kpi.label}</p>

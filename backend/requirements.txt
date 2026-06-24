@@ -8,3 +8,11 @@ pandas
 openpyxl
 reportlab
 python-multipart
+apscheduler
+python-dotenv
+requests
+pyTelegramBotAPI
+opencv-python-headless
+pyzbar
+Pillow
+pytesseract

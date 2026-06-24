@@ -25,13 +25,13 @@ if %errorlevel% neq 0 (
 )
 
 echo  [1/2] Iniciando Backend (FastAPI - puerto 8000)...
-start "Backend - FastAPI" cmd /k "cd /d "%~dp0backend" && color 0B && echo  Backend corriendo en http://localhost:8000 && echo. && python -m uvicorn main:app --reload --port 8000"
+start "Backend - FastAPI" cmd /k "cd /d "%~dp0backend" && color 0B && echo  Backend corriendo en red local... && echo. && python -m uvicorn main:app --reload --host 0.0.0.0 --port 8000"
 
 :: Espera 2 segundos para que el backend arranque primero
 timeout /t 2 /nobreak >nul
 
 echo  [2/2] Iniciando Frontend (Vite - puerto 5173)...
-start "Frontend - Vite" cmd /k "cd /d "%~dp0" && color 0D && echo  Frontend corriendo en http://localhost:5173 && echo. && npm run dev"
+start "Frontend - Vite" cmd /k "cd /d "%~dp0" && color 0D && echo  Frontend corriendo en red local... && echo. && npm run dev -- --host"
 
 :: Espera a que Vite arranque y abre el navegador
 timeout /t 4 /nobreak >nul

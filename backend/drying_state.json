@@ -1,7 +1,72 @@
 {
-    "records": [],
-    "acumuladoPorParte": {},
-    "contadorCarritos": {},
+    "records": [
+        {
+            "idCarrito": "C-UNRMUI8V",
+            "numeroParte": "5208JJ1024A",
+            "descripcion": "DUCT R/L",
+            "maquina": "maquina 01",
+            "qty": 45,
+            "acumulado": 45,
+            "turno": "DÍA",
+            "estado": "FINALIZADO",
+            "horaEntrada": "2026-06-24T13:48:47.000Z",
+            "horaSalida": "2026-06-24T15:10:24.660Z",
+            "tiempoMinutos": 81.6,
+            "earlyExit": false
+        },
+        {
+            "idCarrito": "C-OSOD9GET",
+            "numeroParte": "MCZ60014601",
+            "descripcion": "DUCT U/R",
+            "maquina": "maquina 02",
+            "qty": 45,
+            "acumulado": 45,
+            "turno": "DÍA",
+            "estado": "FINALIZADO",
+            "horaEntrada": "2026-06-24T14:14:31.000Z",
+            "horaSalida": "2026-06-24T15:10:30.520Z",
+            "tiempoMinutos": 56,
+            "earlyExit": false
+        },
+        {
+            "idCarrito": "C-OGXZDTGH",
+            "numeroParte": "5208JJ1024A",
+            "descripcion": "DUCT R/L",
+            "maquina": "maquina 01",
+            "qty": 45,
+            "acumulado": 90,
+            "turno": "DÍA",
+            "estado": "FINALIZADO",
+            "horaEntrada": "2026-06-24T14:23:32.000Z",
+            "horaSalida": "2026-06-24T15:10:18.939Z",
+            "tiempoMinutos": 46.8,
+            "earlyExit": false
+        },
+        {
+            "idCarrito": "C-Q80BL7TR",
+            "numeroParte": "MAL62484101",
+            "descripcion": "BARRIER INS C",
+            "maquina": "maquina 03",
+            "qty": 45,
+            "acumulado": 45,
+            "turno": "DÍA",
+            "estado": "EN SECADO",
+            "horaEntrada": "2026-06-24T15:09:30.000Z",
+            "horaSalida": null,
+            "tiempoMinutos": null,
+            "earlyExit": false
+        }
+    ],
+    "acumuladoPorParte": {
+        "5208JJ1024A": 90,
+        "MCZ60014601": 45,
+        "MAL62484101": 45
+    },
+    "contadorCarritos": {
+        "5208JJ1024A": 2,
+        "MCZ60014601": 1,
+        "MAL62484101": 1
+    },
     "turnoActual": "DÍA",
     "historialTurnos": []
 }

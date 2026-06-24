@@ -1,7 +1,7 @@
 // src/api.js
 // Punto central de configuración del servidor backend.
 // Para cambiar el servidor, define VITE_API_URL en un archivo .env
-export const API_BASE = import.meta.env.VITE_API_URL ?? 'http://localhost:8000';
+export const API_BASE = import.meta.env.VITE_API_URL ?? '/api';
 
 /**
  * Wrapper de fetch que agrega automáticamente la URL base del servidor.

@@ -17,8 +17,31 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.colors import black
 from datetime import datetime, timedelta
 from typing import List, Dict, Any
+from contextlib import asynccontextmanager
+from apscheduler.schedulers.background import BackgroundScheduler
+from reporter import send_telegram_report, send_email_report
+import threading
+from telegram_bot import start_bot
 
-app = FastAPI(title="API Sistema de Etiquetas")
+scheduler = BackgroundScheduler()
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Iniciar bot de Telegram interactivo en segundo plano
+    threading.Thread(target=start_bot, daemon=True).start()
+    
+    # Programar reporte por hora en Telegram
+    scheduler.add_job(send_telegram_report, 'interval', hours=1, id='telegram_job')
+    # Programar reporte de fin de turno (7:30 AM y 7:30 PM) por Email
+    scheduler.add_job(send_email_report, 'cron', hour=7, minute=30, id='email_job_morning')
+    scheduler.add_job(send_email_report, 'cron', hour=19, minute=30, id='email_job_evening')
+    
+    scheduler.start()
+    print("APScheduler iniciado con tareas programadas.")
+    yield
+    scheduler.shutdown()
+
+app = FastAPI(title="API Sistema de Etiquetas", lifespan=lifespan)
 
 # --- Configuración CORS ---
 # Permite que React (que corre en un puerto distinto) haga peticiones a esta API
@@ -60,7 +83,30 @@ class PrintQueueItem(BaseModel):
     qty: int
     turno: str
 
-# --- Modelo para Estado del Cuarto de Secado ---
+# --- ENDPOINTS COLA DE TELEGRAM ---
+TELEGRAM_QUEUE_FILE = 'telegram_queue.json'
+
+@app.get("/telegram-queue")
+def get_telegram_queue():
+    if not os.path.exists(TELEGRAM_QUEUE_FILE):
+        return {"actions": []}
+    try:
+        with open(TELEGRAM_QUEUE_FILE, 'r', encoding='utf-8') as f:
+            return json.load(f)
+    except:
+        return {"actions": []}
+
+class TelegramActions(BaseModel):
+    actions: List[Dict[str, Any]]
+
+@app.post("/telegram-queue/clear")
+def clear_telegram_queue(data: TelegramActions):
+    # Escribir la nueva lista (usualmente vacía o con los que fallaron)
+    with open(TELEGRAM_QUEUE_FILE, 'w', encoding='utf-8') as f:
+        json.dump({"actions": data.actions}, f, indent=4)
+    return {"message": "Queue updated"}
+
+# --- ENDPOINTS ESTADO DEL CUARTO DE SECADO ---
 class DryingState(BaseModel):
     records: List[Dict[str, Any]] = []
     acumuladoPorParte: Dict[str, int] = {}
