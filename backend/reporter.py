@@ -189,37 +189,41 @@ def generate_excel_bytes(data, shift_name):
 def send_telegram_report():
     """Ejecutado cada hora."""
     token = os.getenv('TELEGRAM_BOT_TOKEN')
-    chat_id = os.getenv('TELEGRAM_CHAT_ID')
+    chat_ids_env = os.getenv('TELEGRAM_CHAT_ID')
     
-    if not token or not chat_id or chat_id == 'tu_chat_id_aqui':
+    if not token or not chat_ids_env or chat_ids_env == 'tu_chat_id_aqui':
         print("Telegram no configurado.")
         return
         
+    chat_ids = [cid.strip() for cid in chat_ids_env.split(',') if cid.strip()]
+    
     shift_name, shift_start = get_current_shift_info()
     data = get_production_data(shift_name, shift_start)
     text = format_telegram_message(data, shift_name)
     
-    # Send text
-    url_text = f"https://api.telegram.org/bot{token}/sendMessage"
-    payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    # Send document if data exists
+    excel_bytes = generate_excel_bytes(data, shift_name)
     
-    try:
-        response = requests.post(url_text, json=payload)
-        response.raise_for_status()
-        print(f"[{datetime.now()}] Reporte Telegram enviado con éxito.")
+    for chat_id in chat_ids:
+        # Send text
+        url_text = f"https://api.telegram.org/bot{token}/sendMessage"
+        payload = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
         
-        # Send document if data exists
-        excel_bytes = generate_excel_bytes(data, shift_name)
-        if excel_bytes:
-            url_doc = f"https://api.telegram.org/bot{token}/sendDocument"
-            filename = f"Reporte_Produccion_{shift_name}_{datetime.now().strftime('%Y%m%d')}.xlsx"
-            files = {'document': (filename, excel_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
-            data_doc = {'chat_id': chat_id}
-            doc_response = requests.post(url_doc, data=data_doc, files=files)
-            doc_response.raise_for_status()
-            print(f"[{datetime.now()}] Excel enviado a Telegram con éxito.")
-    except Exception as e:
-        print(f"Error enviando Telegram: {e}")
+        try:
+            response = requests.post(url_text, json=payload)
+            response.raise_for_status()
+            print(f"[{datetime.now()}] Reporte Telegram enviado con éxito a {chat_id}.")
+            
+            if excel_bytes:
+                url_doc = f"https://api.telegram.org/bot{token}/sendDocument"
+                filename = f"Reporte_Produccion_{shift_name}_{datetime.now().strftime('%Y%m%d')}.xlsx"
+                files = {'document': (filename, excel_bytes, 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')}
+                data_doc = {'chat_id': chat_id}
+                doc_response = requests.post(url_doc, data=data_doc, files=files)
+                doc_response.raise_for_status()
+                print(f"[{datetime.now()}] Excel enviado a Telegram con éxito a {chat_id}.")
+        except Exception as e:
+            print(f"Error enviando Telegram a {chat_id}: {e}")
 
 def send_email_report():
     """Ejecutado al final del turno."""
