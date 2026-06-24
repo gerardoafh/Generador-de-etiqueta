@@ -13,6 +13,9 @@ const WebQRScanner = ({ onScanSuccess, onClose }) => {
       fps: 10,
       qrbox: { width: 250, height: 250 },
       aspectRatio: 1.0,
+      videoConstraints: {
+        facingMode: "environment"
+      },
       supportedScanTypes: [0] // 0 = QR_CODE (Html5QrcodeScanType.SCAN_TYPE_CAMERA)
     };
 
