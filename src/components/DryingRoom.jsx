@@ -176,10 +176,12 @@ export default function DryingRoom({ goBack }) {
     let rawText = (overrideCodigo || qrCode).trim().toUpperCase();
     if (!rawText) return;
 
-    // Validación de fecha (Evitar escanear etiquetas de días anteriores o QRs pequeños sin fecha)
-    const dateMatch = rawText.match(/FECHA\s*:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    // Validación de fecha (Evitar escanear etiquetas de días anteriores)
+    // Soporta 'Ñ' en lugar de ':' y '-' en lugar de '/' (común en pistolas con teclado español)
+    const dateMatch = rawText.match(/FECHA[Ñ:\s]*(\d{2}[/-]\d{2}[/-]\d{4})/i);
     if (dateMatch) {
-      const scannedDate = dateMatch[1];
+      // Normalizar guiones a diagonales para la comparación
+      const scannedDate = dateMatch[1].replace(/-/g, '/');
       const hoy = new Date();
       const dd = String(hoy.getDate()).padStart(2, '0');
       const mm = String(hoy.getMonth() + 1).padStart(2, '0');
@@ -196,7 +198,8 @@ export default function DryingRoom({ goBack }) {
 
     // Extraer número de parte si viene en formato completo (QR multilínea)
     let codigo = rawText;
-    const matchPart = rawText.match(/(?:PART\s*)?NUMBER\s*[:\|]?\s*([A-Z0-9]{5,20})/i);
+    // Soporta 'Ñ' en lugar de ':' (pistolas con teclado español)
+    const matchPart = rawText.match(/(?:PART\s*)?NUMBER[Ñ:\|\s]*([A-Z0-9]{5,20})/i);
     if (matchPart) {
       codigo = matchPart[1];
     }
@@ -363,7 +366,7 @@ export default function DryingRoom({ goBack }) {
         : '');
       return `${r.idCarrito},${r.numeroParte},"${r.descripcion}","${r.cliente || ''}",${r.turno},${r.maquina},${r.qty},${r.acumulado},${r.estado},${formatTime(r.horaEntrada)},${formatTime(r.horaSalida)},${tMin}`;
     });
-    const blob = new Blob([cabeceras.join(',') + '\n' + lineas.join('\n')], { type: 'text/csv;charset=utf-8;' });
+    const blob = new Blob(['\uFEFF' + cabeceras.join(',') + '\n' + lineas.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
