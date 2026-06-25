@@ -191,11 +191,8 @@ export default function DryingRoom({ goBack }) {
          if (!overrideCodigo) setQrCode('');
          return;
       }
-    } else {
-      showToast(`⚠️ QR Incorrecto: No tiene fecha. Por favor escanea el QR grande.`, 'error', 5000);
-      if (!overrideCodigo) setQrCode('');
-      return;
     }
+    // Si NO trae la palabra FECHA (ej. escaneó el QR pequeño), lo dejamos pasar asumiendo que es de hoy.
 
     // Extraer número de parte si viene en formato completo (QR multilínea)
     let codigo = rawText;
