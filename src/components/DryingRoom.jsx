@@ -173,8 +173,32 @@ export default function DryingRoom({ goBack }) {
 
   const handleScan = (e, overrideCodigo = null, overrideMode = null) => {
     if (e) e.preventDefault();
-    const codigo = (overrideCodigo || qrCode).trim().toUpperCase();
-    if (!codigo) return;
+    let rawText = (overrideCodigo || qrCode).trim().toUpperCase();
+    if (!rawText) return;
+
+    // Validación de fecha (Evitar escanear etiquetas de días anteriores)
+    const dateMatch = rawText.match(/FECHA\s*:\s*(\d{2}\/\d{2}\/\d{4})/i);
+    if (dateMatch) {
+      const scannedDate = dateMatch[1];
+      const hoy = new Date();
+      const dd = String(hoy.getDate()).padStart(2, '0');
+      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
+      const yyyy = hoy.getFullYear();
+      const todayDate = `${dd}/${mm}/${yyyy}`;
+      
+      if (scannedDate !== todayDate) {
+         showToast(`⚠️ Rechazada: Etiqueta del ${scannedDate}. Solo se permite de HOY (${todayDate}).`, 'error', 6000);
+         if (!overrideCodigo) setQrCode('');
+         return;
+      }
+    }
+
+    // Extraer número de parte si viene en formato completo (QR multilínea)
+    let codigo = rawText;
+    const matchPart = rawText.match(/(?:PART\s*)?NUMBER\s*[:\|]?\s*([A-Z0-9]{5,20})/i);
+    if (matchPart) {
+      codigo = matchPart[1];
+    }
 
     const partInfo = partData[codigo];
     if (!partInfo) {
@@ -263,19 +287,10 @@ export default function DryingRoom({ goBack }) {
     handleScanRef.current = handleScan;
   });
 
-  // Handler para el éxito del escáner web
   const handleWebScanSuccess = (decodedText) => {
     setIsScannerOpen(false); // Cerrar el modal
-
-    // Extraer número de parte usando lógica similar a la del bot
-    let extractedPart = decodedText.trim().toUpperCase();
-    const match = extractedPart.match(/(?:PART\s*)?NUMBER\s*[:\|]?\s*([A-Z0-9]{5,20})/i);
-    if (match) {
-      extractedPart = match[1];
-    }
-
     if (handleScanRef.current) {
-      handleScanRef.current(null, extractedPart);
+      handleScanRef.current(null, decodedText);
     }
   };
 
