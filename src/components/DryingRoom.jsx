@@ -198,10 +198,10 @@ export default function DryingRoom({ goBack }) {
 
     // Extraer número de parte si viene en formato completo (QR multilínea)
     let codigo = rawText;
-    // Soporta 'Ñ' en lugar de ':' (pistolas con teclado español)
-    const matchPart = rawText.match(/(?:PART\s*)?NUMBER[Ñ:\|\s]*([A-Z0-9]{5,20})/i);
+    // Soporta 'Ñ' en lugar de ':' (pistolas con teclado español) y evita capturar 'DESCRIPTION' si el navegador elimina los saltos de línea
+    const matchPart = rawText.match(/(?:PART\s*)?NUMBER[Ñ:\|\s]*([A-Z0-9\-]+?)(?=\s*(?:DESCRIPTION|DESC|QTY|ID|$))/i);
     if (matchPart) {
-      codigo = matchPart[1];
+      codigo = matchPart[1].trim();
     }
 
     const partInfo = partData[codigo];
