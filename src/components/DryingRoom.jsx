@@ -225,6 +225,7 @@ export default function DryingRoom({ goBack }) {
         idCarrito: nuevoId,
         numeroParte: codigo,
         descripcion: partInfo.descripcion,
+        cliente: partInfo.linea_lg || '',
         maquina: partInfo.linea,
         qty: qtyNum,
         acumulado: currentAcum,
@@ -353,13 +354,13 @@ export default function DryingRoom({ goBack }) {
 
   const exportarCSV = () => {
     if (datosFiltrados.length === 0) { showToast('No hay datos para exportar.', 'warning'); return; }
-    const cabeceras = ['ID_Carrito', 'N°_Parte', 'Descripción', 'Máquina', 'Cantidad', 'Acumulado', 'Turno', 'Estado', 'Hora_Entrada', 'Hora_Salida', 'Tiempo_Minutos'];
+    const cabeceras = ['ID_Carrito', 'N°_Parte', 'Descripción', 'Cliente', 'Turno', 'Máquina', 'Cantidad', 'Acumulado', 'Estado', 'Hora_Entrada', 'Hora_Salida', 'Tiempo_Minutos'];
     const lineas = datosFiltrados.map(r => {
       // Para el CSV, calcular tiempo real si todavía está en secado
       const tMin = r.tiempoMinutos || (r.estado === 'EN SECADO' && r.horaEntrada
         ? ((Date.now() - new Date(r.horaEntrada)) / 60000).toFixed(1)
         : '');
-      return `${r.idCarrito},${r.numeroParte},"${r.descripcion}",${r.maquina},${r.qty},${r.acumulado},${r.turno},${r.estado},${formatTime(r.horaEntrada)},${formatTime(r.horaSalida)},${tMin}`;
+      return `${r.idCarrito},${r.numeroParte},"${r.descripcion}","${r.cliente || ''}",${r.turno},${r.maquina},${r.qty},${r.acumulado},${r.estado},${formatTime(r.horaEntrada)},${formatTime(r.horaSalida)},${tMin}`;
     });
     const blob = new Blob([cabeceras.join(',') + '\n' + lineas.join('\n')], { type: 'text/csv;charset=utf-8;' });
     const url = URL.createObjectURL(blob);
@@ -656,9 +657,10 @@ export default function DryingRoom({ goBack }) {
               <tr className="bg-white text-slate-500 text-xs uppercase tracking-wider border-b border-slate-200">
                 <th className="p-4 font-medium text-center">Fecha</th>
                 <th className="p-4 font-medium text-center">Turno</th>
+                <th className="p-4 font-medium text-center">Máquina</th>
                 <th className="p-4 font-medium text-center">N° Parte</th>
                 <th className="p-4 font-medium text-left">Descripción</th>
-                <th className="p-4 font-medium text-center">Máquina</th>
+                <th className="p-4 font-medium text-left">Cliente</th>
                 <th className="p-4 font-medium text-center">Qty</th>
                 <th className="p-4 font-medium text-center">Estado</th>
                 <th className="p-4 font-medium text-center">Entrada</th>
@@ -686,9 +688,10 @@ export default function DryingRoom({ goBack }) {
                         <span className="block text-[10px] text-red-600 font-bold mt-1">⚠️ REZAGO</span>
                       )}
                     </td>
+                    <td className="p-4 text-center text-slate-600 text-sm">{row.maquina}</td>
                     <td className="p-4 text-center text-slate-700 font-mono text-sm">{row.numeroParte}</td>
                     <td className="p-4 text-left text-slate-600 text-sm truncate max-w-[150px]" title={row.descripcion}>{row.descripcion}</td>
-                    <td className="p-4 text-center text-slate-600 text-sm">{row.maquina}</td>
+                    <td className="p-4 text-left text-slate-600 text-sm">{row.cliente || ''}</td>
                     <td className="p-4 text-center font-medium text-blue-600">{row.qty}</td>
                     <td className="p-4 flex justify-center">
                       <span className={`px-3 py-1 rounded-full text-xs font-bold flex items-center w-max gap-1.5 ${row.estado === 'EN SECADO' ? 'bg-orange-100 text-orange-700' : 'bg-green-100 text-green-700'}`}>

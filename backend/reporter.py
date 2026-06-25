@@ -82,8 +82,9 @@ def get_production_data(shift_name, shift_start):
         if part not in production:
             production[part] = {
                 'part': part,
-                'desc': r.get('descripcion', ''),
                 'maquina': r.get('maquina', ''),
+                'desc': r.get('descripcion', ''),
+                'cliente': r.get('cliente', ''),
                 'lotes': 0,
                 'qty': 0
             }
@@ -110,7 +111,8 @@ def format_telegram_message(data, shift_name):
         
     msg += "📋 *Detalle por Parte:*\n"
     for item in data:
-        msg += f"• `{item['part']}`: {item['qty']} pzas ({item['lotes']} lotes)\n"
+        cliente_str = f" - {item['cliente']}" if item['cliente'] else ""
+        msg += f"• `{item['part']}`{cliente_str}: {item['qty']} pzas ({item['lotes']} lotes)\n"
         
     return msg
 
@@ -142,8 +144,9 @@ def format_email_html(data, shift_name):
         <table border="1" cellpadding="8" cellspacing="0" style="border-collapse: collapse; width: 100%; max-width: 800px;">
             <tr style="background-color: #f3f4f6;">
                 <th>N° Parte</th>
-                <th>Descripción</th>
                 <th>Máquina</th>
+                <th>Descripción</th>
+                <th>Cliente</th>
                 <th>Lotes</th>
                 <th>Total Piezas</th>
             </tr>
@@ -152,8 +155,9 @@ def format_email_html(data, shift_name):
         html += f"""
             <tr>
                 <td><strong>{item['part']}</strong></td>
-                <td>{item['desc']}</td>
                 <td>{item['maquina']}</td>
+                <td>{item['desc']}</td>
+                <td>{item['cliente']}</td>
                 <td style="text-align: center;">{item['lotes']}</td>
                 <td style="text-align: right; color: #7C3AED; font-weight: bold;">{item['qty']}</td>
             </tr>
@@ -173,11 +177,15 @@ def generate_excel_bytes(data, shift_name):
     # Renombrar columnas para que se vean bien
     df.rename(columns={
         'part': 'N° Parte',
-        'desc': 'Descripción',
         'maquina': 'Máquina',
+        'desc': 'Descripción',
+        'cliente': 'Cliente',
         'lotes': 'Lotes',
         'qty': 'Total Piezas'
     }, inplace=True)
+    
+    # Ordenar columnas
+    df = df[['N° Parte', 'Máquina', 'Descripción', 'Cliente', 'Lotes', 'Total Piezas']]
     
     excel_buffer = io.BytesIO()
     with pd.ExcelWriter(excel_buffer, engine='openpyxl') as writer:
