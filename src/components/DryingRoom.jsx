@@ -176,7 +176,7 @@ export default function DryingRoom({ goBack }) {
     let rawText = (overrideCodigo || qrCode).trim().toUpperCase();
     if (!rawText) return;
 
-    // Validación de fecha (Evitar escanear etiquetas de días anteriores)
+    // Validación de fecha (Evitar escanear etiquetas de días anteriores o QRs pequeños sin fecha)
     const dateMatch = rawText.match(/FECHA\s*:\s*(\d{2}\/\d{2}\/\d{4})/i);
     if (dateMatch) {
       const scannedDate = dateMatch[1];
@@ -191,6 +191,10 @@ export default function DryingRoom({ goBack }) {
          if (!overrideCodigo) setQrCode('');
          return;
       }
+    } else {
+      showToast(`⚠️ QR Incorrecto: No tiene fecha. Por favor escanea el QR grande.`, 'error', 5000);
+      if (!overrideCodigo) setQrCode('');
+      return;
     }
 
     // Extraer número de parte si viene en formato completo (QR multilínea)

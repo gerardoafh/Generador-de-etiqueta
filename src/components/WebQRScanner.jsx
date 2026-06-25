@@ -24,6 +24,11 @@ const WebQRScanner = ({ onScanSuccess, onClose }) => {
     // Callback para evitar que siga escaneando tras el primer éxito
     let isScanned = false;
     const onScan = (decodedText) => {
+      // Ignorar silenciosamente QRs que no tengan la palabra FECHA
+      if (!decodedText.toUpperCase().includes("FECHA")) {
+        return;
+      }
+
       if (!isScanned) {
         isScanned = true;
         // Limpiar el escáner
