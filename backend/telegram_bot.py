@@ -22,6 +22,18 @@ token = os.getenv('TELEGRAM_BOT_TOKEN')
 
 DRYING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'drying_state.json')
 DATA_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
+TELEGRAM_QUEUE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'telegram_queue.json')
+
+def _push_to_telegram_queue(codigo: str, action: str):
+    """Agrega una acción a la cola para que el frontend muestre la notificación."""
+    try:
+        data = _load_json(TELEGRAM_QUEUE_FILE)
+        actions = data.get('actions', [])
+        actions.append({"codigo": codigo, "action": action, "timestamp": datetime.now().isoformat()})
+        data['actions'] = actions
+        _save_json(TELEGRAM_QUEUE_FILE, data)
+    except Exception as e:
+        print(f"Error escribiendo en telegram_queue: {e}")
 
 # Estado temporal por chat: guarda la parte detectada antes de que el
 # usuario diga "entrada" o "salida" en un mensaje separado.
@@ -245,6 +257,7 @@ def _registrar_entrada(part_number: str, part_info: dict, qty: int) -> dict:
     state['turnoActual']       = shift_name
 
     _save_json(DRYING_FILE, state)
+    _push_to_telegram_queue(part_number, 'ENTRADA')
     return new_record
 
 
@@ -271,6 +284,7 @@ def _registrar_salida(part_number: str) -> dict | None:
     target['tiempoMinutos'] = minutos
 
     _save_json(DRYING_FILE, state)
+    _push_to_telegram_queue(part_number, 'SALIDA')
     return target
 
 

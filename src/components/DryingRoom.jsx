@@ -369,12 +369,10 @@ export default function DryingRoom({ goBack }) {
               headers: { "Content-Type": "application/json" },
               body: JSON.stringify({ actions: data.actions.slice(1) })
             });
-            // Ejecutar la acción
+            // Ejecutar solo la notificación visual (el backend ya procesó los datos)
             if (handleScanRef.current) {
-              // Pequeño retardo visual para que parezca que "llegó"
               setTimeout(() => {
                 showToast(`🤖 Comando de Telegram recibido: ${act.action} - ${act.codigo}`, 'info', 3000);
-                handleScanRef.current(null, act.codigo, act.action);
               }, 500);
             }
           }
