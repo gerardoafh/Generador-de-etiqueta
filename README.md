@@ -402,3 +402,49 @@ SMTP_USER="tu_correo@gmail.com"
 SMTP_PASSWORD="tu_password_de_aplicacion"
 EMAIL_RECEIVERS="gerente@empresa.com"
 ```
+
+---
+
+## ☁️ Actualización en AWS (Ubuntu EC2)
+
+Cuando realices cambios en tu código local y quieras desplegarlos en tu servidor de producción AWS (Ubuntu), sigue este flujo de trabajo para garantizar que las credenciales y las dependencias (como OpenCV) se instalen correctamente sin interfaz gráfica.
+
+### 1. Sube los cambios desde tu máquina local
+```bash
+git add .
+git commit -m "Descripción de tus cambios"
+git push
+```
+
+### 2. Descarga los cambios en el servidor AWS
+Conéctate por SSH a tu consola de AWS y ve a la carpeta del proyecto para descargar los cambios:
+```bash
+cd ~/Generador-de-etiqueta
+git config pull.rebase false  # Asegurar estrategia de merge
+git pull
+```
+*(Si modificaste archivos manualmente en AWS por error y quieres forzar la descarga exacta de Github: `git fetch origin` seguido de `git reset --hard origin/main`)*
+
+### 3. Instalar/Actualizar Dependencias
+Ubuntu 23.04+ requiere bandera especial para instalar paquetes globales de Python. En AWS siempre usamos la versión **headless** de OpenCV para evitar que el backend colapse pidiendo librerías de interfaz gráfica:
+```bash
+cd backend
+python3 -m pip install -r requirements.txt --break-system-packages
+```
+
+### 4. Actualizar Variables de Entorno (El `.env` NO se descarga de Git)
+Si agregaste bots de Telegram nuevos o correos, edítalo en AWS:
+```bash
+nano .env
+```
+*(Guarda con `Ctrl + O` -> `Enter`, y sal con `Ctrl + X`)*
+
+### 5. Reiniciar el Backend
+Cierra el servidor de Python viejo y vuelve a lanzarlo. Si no sabes cómo lo dejaste corriendo, puedes forzar el cierre así:
+```bash
+sudo pkill -f uvicorn
+```
+Y luego arrancarlo de nuevo como suelas hacerlo (con tu script, PM2, o directamente en consola):
+```bash
+python3 -m uvicorn main:app --host 0.0.0.0 --port 8000
+```

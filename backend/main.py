@@ -52,10 +52,11 @@ app.add_middleware(
     allow_headers=["*"],
 )
 
-DATA_FILE = 'data.json'
-LOGO_PATH = os.path.join(os.path.dirname(os.path.abspath(__file__)), "Logo.png")
-DRYING_FILE = 'drying_state.json'
-PRINT_QUEUE_FILE = 'print_queue.json'
+BASE_DIR = os.path.dirname(os.path.abspath(__file__))
+DATA_FILE = os.path.join(BASE_DIR, 'data.json')
+LOGO_PATH = os.path.join(BASE_DIR, 'Logo.png')
+DRYING_FILE = os.path.join(BASE_DIR, 'drying_state.json')
+PRINT_QUEUE_FILE = os.path.join(BASE_DIR, 'print_queue.json')
 
 # --- Modelo de Datos ---
 class PartData(BaseModel):
@@ -82,7 +83,7 @@ class PrintQueueItem(BaseModel):
     turno: str
 
 # --- ENDPOINTS COLA DE TELEGRAM ---
-TELEGRAM_QUEUE_FILE = 'telegram_queue.json'
+TELEGRAM_QUEUE_FILE = os.path.join(BASE_DIR, 'telegram_queue.json')
 
 @app.get("/telegram-queue")
 def get_telegram_queue():
