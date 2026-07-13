@@ -98,15 +98,23 @@ El sistema cuenta con **4 módulos** accesibles desde un menú principal, más u
 | `localStorage` | — | Persistencia de configuración local |
 
 ### Backend
-| Tecnología | Versión | Uso |
-|---|---|---|
-| FastAPI | latest | Framework de la API REST |
-| Uvicorn | latest | Servidor ASGI |
-| Pydantic | latest | Validación de datos |
-| Pandas | latest | Lectura de archivos Excel/CSV |
-| OpenPyXL | latest | Soporte `.xlsx` para Pandas |
-| ReportLab | latest | Generación de PDF y códigos QR |
-| python-multipart | latest | Soporte para carga de archivos |
+| Paquete | Uso |
+|---|---|
+| `fastapi` | Framework de la API REST |
+| `uvicorn[standard]` | Servidor ASGI |
+| `pydantic` | Validación de datos |
+| `pandas` | Lectura de archivos Excel/CSV |
+| `openpyxl` | Soporte `.xlsx` para Pandas |
+| `reportlab` | Generación de PDF y códigos QR |
+| `python-multipart` | Soporte para carga de archivos vía formulario |
+| `apscheduler` | Reportes automáticos por hora y fin de turno |
+| `python-dotenv` | Carga de variables de entorno desde `.env` |
+| `requests` | Llamadas HTTP (envío de mensajes a Telegram) |
+| `pyTelegramBotAPI` | Bot de Telegram (comandos y fotos) |
+| `opencv-python-headless` | Visión artificial para lectura de etiquetas por foto |
+| `pyzbar` | Decodificación de códigos QR y de barras |
+| `Pillow` | Procesamiento de imágenes |
+| `pytesseract` | OCR para extraer texto de etiquetas fotografiadas |
 
 ---
 
@@ -162,10 +170,13 @@ flowchart TD
 ```
 mi-sistema-etiquetas/
 ├── backend/
-│   ├── main.py               # API FastAPI (todos los endpoints)
+│   ├── main.py               # API FastAPI (todos los endpoints + scheduler)
+│   ├── telegram_bot.py       # Bot de Telegram (QR, OCR, comandos de voz)
+│   ├── reporter.py           # Generación y envío de reportes (Telegram + Email + Excel)
 │   ├── data.json             # Base de datos de partes (auto-generado)
 │   ├── drying_state.json     # Estado del cuarto de secado (auto-generado)
 │   ├── print_queue.json      # Cola de impresión persistida (auto-generado)
+│   ├── telegram_queue.json   # Cola de acciones pendientes del bot (auto-generado)
 │   ├── Logo.png              # Logo para las etiquetas PDF
 │   └── requirements.txt      # Dependencias de Python
 ├── src/
@@ -275,6 +286,8 @@ La configuración del **tiempo máximo de secado** se guarda automáticamente en
 | `POST` | `/print-queue/state` | Guarda el estado de la cola |
 | `GET` | `/drying-room/state` | Obtiene el estado del cuarto de secado |
 | `POST` | `/drying-room/state` | Actualiza el estado del cuarto de secado |
+| `GET` | `/telegram-queue` | Obtiene las acciones pendientes del bot de Telegram |
+| `POST` | `/telegram-queue/clear` | Limpia (o actualiza) la cola de acciones del bot |
 
 ---
 
@@ -318,3 +331,74 @@ si tiempo_en_secado_actual ≥ maxDryingMins (configurable, default 60 min) → 
 
 - El valor `0` desactiva la alerta de tiempo vencido.
 - La configuración se guarda por navegador (localStorage).
+
+---
+
+## 🤖 Integración con Bot de Telegram
+
+El sistema incluye un potente Bot de Telegram para automatizar flujos desde el celular:
+
+### Comandos y Flujos Soportados
+
+| Mensaje enviado al bot | Acción |
+|---|---|
+| 📷 Foto + caption `entrada` | Registra entrada directamente tras leer el QR |
+| 📷 Foto + caption `salida` | Registra salida directamente tras leer el QR |
+| 📷 Solo foto | Lee el QR (o usa OCR si está borroso) y espera que el operador escriba `entrada` o `salida` |
+| `entrada MCZ60014601` | Registro manual de entrada por número de parte |
+| `salida MCZ60014601` | Registro manual de salida por número de parte |
+| `reporte de producción` | Genera y envía el reporte del turno actual con Excel adjunto |
+| `piezas de [PARTE]` | Consulta piezas producidas de un número de parte específico en el turno actual |
+| `cuarto de secado` | Lista todos los carritos actualmente en secado |
+| Cualquier otro texto | Muestra el menú de ayuda con todos los comandos |
+
+#### 🔍 Robustez de Lectura de Etiquetas por Foto
+1. **PyZbar** intenta decodificar el QR de la imagen original.
+2. Si falla, **OpenCV** ecualizala imagen en escala de grises y reintenta.
+3. Si aún falla, el detector nativo de OpenCV hace un tercer intento.
+4. Como último recurso, **Tesseract OCR** extrae el texto impreso de la etiqueta.
+5. El número de parte extraído pasa por **corrección de caracteres OCR** (ej. `O`→`0`, `l`→`1`) y luego por **búsqueda difusa** (`difflib`) contra el catálogo de partes para tolerar errores de lectura.
+
+### 📊 Reportes Automatizados (`reporter.py`)
+- **Reportes por Hora (Telegram):** Cada hora se envía al grupo un resumen de la producción acumulada del turno, incluyendo un Excel adjunto.
+- **Reportes de Fin de Turno (Email + Telegram):** A las **7:30 AM** y **7:30 PM** se genera un reporte final con tabla HTML por correo electrónico y un archivo **Excel (.xlsx)** adjunto. Simultáneamente se envía un resumen a Telegram.
+- **Múltiples Destinatarios:** Se configuran múltiples Chat IDs de Telegram separados por comas y múltiples correos en `EMAIL_RECEIVERS` en el archivo `.env`.
+
+#### Funciones de `reporter.py`
+| Función | Descripción |
+|---|---|
+| `get_current_shift_info()` | Determina el turno actual (DÍA/NOCHE) y su hora de inicio |
+| `get_production_data(shift, start)` | Filtra y consolida registros del cuarto de secado por turno |
+| `format_telegram_message(data, shift)` | Genera el texto Markdown para Telegram |
+| `format_email_html(data, shift)` | Genera el HTML con tabla para el correo electrónico |
+| `generate_excel_bytes(data, shift)` | Genera el archivo Excel en memoria con `pandas` + `openpyxl` |
+| `send_telegram_report()` | Envía texto + Excel a todos los Chat IDs configurados |
+| `send_email_report()` | Envía correo HTML + Excel a todos los destinatarios configurados |
+
+---
+
+## 🛡️ Robustez del Escáner QR
+
+El lector del cuarto de secado está blindado contra errores comunes en piso de producción:
+- **Validación de Fecha Inflexible:** Si se escanea una etiqueta multilínea, el sistema verifica que la fecha impresa corresponda al día exacto de **hoy**. Si es de un día anterior, bloquea la entrada.
+- **Compatibilidad con Teclados en Español:** Las pistolas físicas configuradas en inglés que envían caracteres corruptos (como `Ñ` en lugar de `:` y `-` en lugar de `/` al usar Windows en español) son interpretadas y corregidas automáticamente en tiempo real.
+- **Manejo de Etiquetas Multi-QR:** Si la etiqueta tiene un QR pequeño (solo número de parte) y uno grande (datos completos), la cámara web ignorará automáticamente el pequeño para forzar la lectura del grande, mientras que la pistola física aceptará cualquiera.
+- **Cámara Trasera Forzada:** En dispositivos móviles, el escáner web utiliza siempre la cámara principal (trasera) por defecto.
+
+---
+
+## ⚙️ Configuración del Entorno (.env)
+
+El backend utiliza un archivo `.env` para gestionar secretos de Telegram y Correo:
+
+```env
+TELEGRAM_BOT_TOKEN="tu_token_aqui"
+TELEGRAM_CHAT_ID="id_1, id_2"
+TELEGRAM_ALLOWED_USERS="user1, user2"
+MAX_USERS="5"
+SMTP_SERVER="smtp.gmail.com"
+SMTP_PORT="587"
+SMTP_USER="tu_correo@gmail.com"
+SMTP_PASSWORD="tu_password_de_aplicacion"
+EMAIL_RECEIVERS="gerente@empresa.com"
+```

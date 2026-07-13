@@ -71,6 +71,20 @@ export default function DryingRoom({ goBack }) {
   const [filtroFecha, setFiltroFecha] = useState('');
   const inputRef = useRef(null); // Ref para mantener el enfoque en el campo de texto
   const [isStateLoaded, setIsStateLoaded] = useState(false); // Para saber si ya cargamos la red
+  const [lastUpdated, setLastUpdated] = useState(0);
+
+  // NUEVO: Helper para guardar el estado explícitamente y no con debounce
+  const saveStateToBackend = async (newState) => {
+    try {
+      await apiFetch("/drying-room/state", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(newState)
+      });
+    } catch (err) {
+      console.error("Error guardando el estado en el backend:", err);
+    }
+  };
 
   // Cargar datos de partes desde el backend al montar el componente
   useEffect(() => {
@@ -112,6 +126,7 @@ export default function DryingRoom({ goBack }) {
             setContadorCarritos(data.contadorCarritos || {});
             setTurnoActual(data.turnoActual);
             setHistorialTurnos(data.historialTurnos || []);
+            setLastUpdated(data.lastUpdated || 0);
           }
         }
       } catch (err) {
@@ -137,36 +152,52 @@ export default function DryingRoom({ goBack }) {
           contadorCarritos,
           totalCarritos: Object.values(contadorCarritos).reduce((a, b) => a + b, 0),
         };
-        setHistorialTurnos(prev => [snapshot, ...prev]);
+        const newHistorial = [snapshot, ...historialTurnos];
+        setHistorialTurnos(newHistorial);
         showToast(`⏰ Cambio de turno: iniciando turno ${nuevoTurno}. Acumuladores guardados y reiniciados.`, 'warning', 8000);
         setTurnoActual(nuevoTurno);
         setAcumuladoPorParte({});
         setContadorCarritos({});
+        
+        saveStateToBackend({
+          records,
+          acumuladoPorParte: {},
+          contadorCarritos: {},
+          turnoActual: nuevoTurno,
+          historialTurnos: newHistorial
+        });
       }
     }, 60000);
     return () => clearInterval(interval);
-  }, [turnoActual, isStateLoaded, acumuladoPorParte, contadorCarritos]);
+  }, [turnoActual, isStateLoaded, acumuladoPorParte, contadorCarritos, records, historialTurnos]);
 
-  // Sincronizar hacia el backend con debounce de 1s para no saturar en cada render
+  // Polling para sincronizar cambios externos (Telegram / Móvil)
   useEffect(() => {
-    if (!isStateLoaded) return; // Evita borrar el servidor si la app apenas está abriendo
-
-    const timer = setTimeout(() => {
-      apiFetch("/drying-room/state", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          records,
-          acumuladoPorParte,
-          contadorCarritos,
-          turnoActual,
-          historialTurnos,
-        })
-      }).catch(err => console.error("Error guardando el estado en el backend:", err));
-    }, 1000); // debounce: espera 1s de inactividad antes de guardar
-
-    return () => clearTimeout(timer);
-  }, [records, acumuladoPorParte, contadorCarritos, turnoActual, historialTurnos, isStateLoaded]);
+    if (!isStateLoaded) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiFetch("/drying-room/state");
+        if (res.ok) {
+          const data = await res.json();
+          const serverTime = data.lastUpdated || 0;
+          if (serverTime > lastUpdated && data.turnoActual) {
+            const parsedRecords = (data.records || []).map(r => ({
+              ...r,
+              horaEntrada: r.horaEntrada ? new Date(r.horaEntrada) : null,
+              horaSalida: r.horaSalida ? new Date(r.horaSalida) : null,
+            }));
+            setRecords(parsedRecords);
+            setAcumuladoPorParte(data.acumuladoPorParte || {});
+            setContadorCarritos(data.contadorCarritos || {});
+            setTurnoActual(data.turnoActual);
+            setHistorialTurnos(data.historialTurnos || []);
+            setLastUpdated(serverTime);
+          }
+        }
+      } catch (err) {}
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [isStateLoaded, lastUpdated]);
 
   // Referencia para acceder a la última versión de la función en el setTimeout
   const handleScanRef = useRef();
@@ -187,11 +218,11 @@ export default function DryingRoom({ goBack }) {
       const mm = String(hoy.getMonth() + 1).padStart(2, '0');
       const yyyy = hoy.getFullYear();
       const todayDate = `${dd}/${mm}/${yyyy}`;
-      
+
       if (scannedDate !== todayDate) {
-         showToast(`⚠️ Rechazada: Etiqueta del ${scannedDate}. Solo se permite de HOY (${todayDate}).`, 'error', 6000);
-         if (!overrideCodigo) setQrCode('');
-         return;
+        showToast(`⚠️ Rechazada: Etiqueta del ${scannedDate}. Solo se permite de HOY (${todayDate}).`, 'error', 6000);
+        if (!overrideCodigo) setQrCode('');
+        return;
       }
     }
     // Si NO trae la palabra FECHA (ej. escaneó el QR pequeño), lo dejamos pasar asumiendo que es de hoy.
@@ -222,8 +253,11 @@ export default function DryingRoom({ goBack }) {
       const currentCount = (contadorCarritos[codigo] || 0) + 1;
       const currentAcum = (acumuladoPorParte[codigo] || 0) + qtyNum;
 
-      setContadorCarritos({ ...contadorCarritos, [codigo]: currentCount });
-      setAcumuladoPorParte({ ...acumuladoPorParte, [codigo]: currentAcum });
+      const newContador = { ...contadorCarritos, [codigo]: currentCount };
+      const newAcumulado = { ...acumuladoPorParte, [codigo]: currentAcum };
+
+      setContadorCarritos(newContador);
+      setAcumuladoPorParte(newAcumulado);
 
       const newRecord = {
         idCarrito: nuevoId,
@@ -239,7 +273,18 @@ export default function DryingRoom({ goBack }) {
         horaSalida: null,
         tiempoMinutos: null
       };
-      setRecords([newRecord, ...records]);
+      
+      const newRecordsList = [newRecord, ...records];
+      setRecords(newRecordsList);
+
+      saveStateToBackend({
+        records: newRecordsList,
+        acumuladoPorParte: newAcumulado,
+        contadorCarritos: newContador,
+        turnoActual,
+        historialTurnos
+      });
+
       // #5 — Toast de confirmación de entrada
       showToast(`✅ ENTRADA: ${codigo} — ${qtyNum} piezas`, 'success', 2500);
 
@@ -278,6 +323,15 @@ export default function DryingRoom({ goBack }) {
             : r
         );
         setRecords(updatedRecords);
+
+        saveStateToBackend({
+          records: updatedRecords,
+          acumuladoPorParte,
+          contadorCarritos,
+          turnoActual,
+          historialTurnos
+        });
+
         // #5 — Toast de confirmación de salida
         if (!earlyExit) {
           showToast(`📤 SALIDA: ${codigo} — ${tiempoMin} min en secado`, 'info', 2500);
@@ -420,7 +474,7 @@ export default function DryingRoom({ goBack }) {
 
   // KPIs del turno actual únicamente
   const entradasTurnoActual = records.filter(r => r.turno === turnoActual);
-  const salidasTurnoActual  = recordsHistorial.filter(r => r.turno === turnoActual);
+  const salidasTurnoActual = recordsHistorial.filter(r => r.turno === turnoActual);
 
   // Contar cuántos carritos se quedaron del turno anterior
   const carritosTurnoAnterior = recordsActivos.filter(r => r.turno !== turnoActual).length;
@@ -577,7 +631,7 @@ export default function DryingRoom({ goBack }) {
                 className={`w-full h-full text-center text-2xl md:text-3xl font-mono pl-16 p-6 bg-slate-50 border-2 border-slate-200 rounded-2xl focus:bg-white outline-none transition-all placeholder:text-slate-300 ${scanMode === 'ENTRADA' ? 'focus:border-green-500 focus:ring-4 focus:ring-green-500/20' : 'focus:border-red-500 focus:ring-4 focus:ring-red-500/20'}`}
               />
             </div>
-            
+
             <button
               type="button"
               onClick={() => setIsScannerOpen(true)}
@@ -591,9 +645,9 @@ export default function DryingRoom({ goBack }) {
       </div>
 
       {isScannerOpen && (
-        <WebQRScanner 
-          onScanSuccess={handleWebScanSuccess} 
-          onClose={() => setIsScannerOpen(false)} 
+        <WebQRScanner
+          onScanSuccess={handleWebScanSuccess}
+          onClose={() => setIsScannerOpen(false)}
         />
       )}
 
