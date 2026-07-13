@@ -12,7 +12,7 @@ apscheduler
 python-dotenv
 requests
 pyTelegramBotAPI
-opencv-python
+opencv-python-headless
 pyzbar
 Pillow
 pytesseract

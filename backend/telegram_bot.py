@@ -16,7 +16,8 @@ from dotenv import load_dotenv
 
 from reporter import get_current_shift_info, get_production_data, format_telegram_message, generate_excel_bytes
 
-load_dotenv()
+base_dir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(base_dir, '.env'))
 token = os.getenv('TELEGRAM_BOT_TOKEN')
 
 DRYING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'drying_state.json')

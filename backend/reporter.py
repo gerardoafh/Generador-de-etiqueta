@@ -7,7 +7,8 @@ from datetime import datetime, timedelta
 from dotenv import load_dotenv
 
 # Cargar variables de entorno
-load_dotenv()
+base_dir = os.path.dirname(os.path.abspath(__file__))
+load_dotenv(os.path.join(base_dir, '.env'))
 
 DRYING_FILE = 'drying_state.json'
 
