@@ -201,22 +201,30 @@ def _ocr_extract_part_info(image_bytes: bytes) -> dict | None:
 # ─────────────────────────────────────────────
 #  Extraer número de parte del payload del QR
 # ─────────────────────────────────────────────
-def _parse_part_number_from_qr(qr_text: str) -> str | None:
+def _parse_part_number_from_qr(qr_text: str) -> tuple[str | None, str | None]:
     """
     El QR contiene líneas como:
+        Fecha: 14/07/2025
         Part Number: MAL62524101
         Description: BARRIER INS C
         ...
-    Extrae el valor de 'Part Number'.
+    Devuelve (part_number, fecha_en_qr). fecha_en_qr es None si el QR no trae fecha.
     """
+    # Extraer fecha si viene en el QR grande
+    fecha_qr = None
+    fecha_match = re.search(r'Fecha[:\s]+([\d]{2}/[\d]{2}/[\d]{4})', qr_text, re.IGNORECASE)
+    if fecha_match:
+        fecha_qr = fecha_match.group(1)
+
+    # Extraer número de parte
     match = re.search(r'Part\s+Number[:\s]+([A-Z0-9_\-]+)', qr_text, re.IGNORECASE)
     if match:
-        return match.group(1).strip().upper()
-    # QR simple que solo contiene el número de parte
+        return match.group(1).strip().upper(), fecha_qr
+    # QR simple que solo contiene el número de parte (sin fecha)
     candidate = qr_text.strip().upper()
     if re.match(r'^[A-Z0-9_\-]{5,}$', candidate):
-        return candidate
-    return None
+        return candidate, None
+    return None, None
 
 
 # ─────────────────────────────────────────────
@@ -304,12 +312,29 @@ def _procesar_foto_con_accion(bot: telebot.TeleBot, chat_id: int,
     qr_text = _read_qr_from_bytes(image_bytes)
 
     if qr_text:
-        part_number = _parse_part_number_from_qr(qr_text)
+        part_number, fecha_qr = _parse_part_number_from_qr(qr_text)
         if not part_number:
             bot.send_message(chat_id,
                 f"⚠️ Leí el QR pero no encontré el número de parte.\n"
                 f"Contenido QR:\n`{qr_text[:200]}`", parse_mode="Markdown")
             return
+
+        # ── Validar fecha del QR grande (solo para ENTRADA) ─────────────────
+        # En SALIDA no validamos: la etiqueta fue generada cuando el carrito
+        # entró al secado, puede ser de ayer (turno noche cruzando medianoche).
+        if fecha_qr and accion == 'entrada':
+            from datetime import timedelta
+            hoy     = datetime.now().strftime('%d/%m/%Y')
+            ayer    = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
+            if fecha_qr not in (hoy, ayer):
+                bot.send_message(chat_id,
+                    f"⛔ *Etiqueta rechazada*\n"
+                    f"La fecha del QR es *{fecha_qr}*, pero hoy es *{hoy}*.\n"
+                    f"Solo se permiten etiquetas generadas *hoy* o *ayer* "
+                    f"(turno noche).",
+                    parse_mode="Markdown")
+                return
+
         ocr_qty    = None
         via_ocr    = False
         ocr_raw    = None
