@@ -230,10 +230,21 @@ async def importar_bom(file: UploadFile = File(...)):
         if parte in (None, "") or str(parte).strip().upper() in ("NO. PARTE", "품번"):
             continue
         key = str(parte).strip().upper()
+        if key in ("AAA", "#N/A", "#VALUE!", "#REF!"):
+            continue  # filas de prueba / basura
+        # Ciclo: columna R (vigente); si viene en 0 usar las columnas históricas Y, W, V
+        ciclo, fuente = None, None
+        for idx, col in ((17, "R"), (24, "Y"), (22, "W"), (21, "V")):
+            v = _num(row[idx])
+            if v and v > 0:
+                ciclo, fuente = v, col
+                break
+        corte = str(row[7] or "").strip().lower() == "cutting"
         out[key] = {
             "linea": _txt(row[1]), "modelo": _txt(row[2]), "descripcion": _txt(row[4]), "cliente": _txt(row[5]),
             "id1": _txt(row[6]), "id2": _txt(row[7]), "resina": _txt(row[8]), "densidad": _num(row[9]),
-            "peso": _num(row[10]), "tipo": _txt(row[14]), "molde": _txt(row[15]), "cav": _num(row[16]), "ciclo": _num(row[17]),
+            "peso": _num(row[10]), "tipo": _txt(row[14]), "molde": _txt(row[15]), "cav": _num(row[16]) or None, "ciclo": ciclo,
+            "ciclo_fuente": fuente, "corte": corte,
         }
     if not out:
         raise HTTPException(400, "No encontré filas de BOM (encabezado 'NO. PARTE' en la columna D).")
@@ -304,7 +315,10 @@ def _fila(fecha: str, turno: str, maq: int, parte: str, esc: dict, cap: dict, bo
     mtto = {k: float(cap.get("mtto", {}).get(k) or 0) for k, _ in MTTO}
     scrap_ttl = sum(scrap.values())
     buena = ttl - scrap_ttl
-    meta = (3600 / ciclo_bom * cav * horas) if (ciclo_bom and cav) else 0
+    corte = bool(b.get("corte"))
+    meta = (3600 / ciclo_bom * cav * horas) if (ciclo_bom and cav and not corte) else 0
+    faltan = [] if not b else [n for n, v in (("peso", peso), ("cavidades", cav_bom), ("ciclo", ciclo_bom))
+                               if not v and not (corte and n != "peso")]
     tiempos = esc.get("tiempos") or []
     return {
         "fecha": fecha, "mes": f.month, "semana": weeknum(f), "turno": turno, "maquina": maq, "parte": parte,
@@ -320,7 +334,7 @@ def _fila(fecha: str, turno: str, maq: int, parte: str, esc: dict, cap: dict, bo
         "scrap_pct": (scrap_ttl / buena) if buena else None, "shot": (ttl / cav) if cav else None,
         "carritos": esc.get("carritos", 0), "en_secado": esc.get("en_secado", 0),
         "secado_prom_min": round(sum(tiempos) / len(tiempos), 1) if tiempos else None,
-        "prod_escaneada": ttl_esc, "capturado": bool(cap), "sin_bom": not b,
+        "prod_escaneada": ttl_esc, "capturado": bool(cap), "sin_bom": not b, "corte": corte, "faltan": faltan,
         "comentario": cap.get("comentario", ""),
     }
 
@@ -351,12 +365,14 @@ def _resumen(filas):
     def tot(fs):
         meta = sum(x["meta"] for x in fs)
         buena = sum(x["prod_buena"] for x in fs)
+        buena_con_meta = sum(x["prod_buena"] for x in fs if x["meta"])
         horas = sum(x["horas"] for x in fs)
         paro = sum(x["paro_ttl"] for x in fs)
         scrap = sum(x["scrap_ttl"] for x in fs)
         cb = [x for x in fs if x["ciclo_bom"] and x["ciclo_real"]]
         return {
-            "filas": len(fs), "meta": meta, "resultado": buena, "cumplimiento": buena / meta if meta else None,
+            "filas": len(fs), "meta": meta, "resultado": buena, "cumplimiento": buena_con_meta / meta if meta else None,
+            "sin_meta": sum(1 for x in fs if not x["meta"]),
             "kg": sum(x["prod_kg"] or 0 for x in fs), "prod_ttl": sum(x["prod_ttl"] for x in fs),
             "scrap": scrap, "scrap_pct": scrap / buena if buena else None, "paro_hrs": paro,
             "paro_pct": paro / horas if horas else None, "cambios_molde": sum(x["cambios_molde"] for x in fs),

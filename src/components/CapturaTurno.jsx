@@ -145,7 +145,7 @@ export default function CapturaTurno({ goBack }) {
                     <FragmentFila key={k}>
                       <tr className={`${abiertaEsta ? 'bg-blue-50' : 'hover:bg-slate-50'}`}>
                         <td className="p-3 font-bold">{f.maquina || '¿?'}</td>
-                        <td className="p-3 font-mono">{f.parte}{f.sin_bom && <span title="No está en el BOM: sin peso/ciclo/cavidades" className="ml-1 text-amber-600">⚠</span>}</td>
+                        <td className="p-3 font-mono">{f.parte}{f.sin_bom ? <span title="No está en el BOM" className="text-amber-600"> ⚠</span> : f.faltan?.length > 0 && <span title={`Falta en BOM: ${f.faltan.join(", ")}`} className="text-amber-600"> ⚠</span>}{f.corte && <span title="Pieza de corte: sin meta por ciclo" className="ml-1 text-xs bg-slate-200 text-slate-600 px-1.5 rounded">corte</span>}</td>
                         <td className="p-3 text-slate-600">{f.descripcion}</td>
                         <td className="p-3">{f.carritos ?? 0}{f.en_secado > 0 && <span className="text-orange-500 text-xs"> ({f.en_secado} en secado)</span>}</td>
                         <td className="p-3 font-semibold">{fmt(f.prod_ttl)}</td>

@@ -156,7 +156,7 @@ export default function ProductionReport({ goBack }) {
                 <tr key={`${f.fecha}${f.turno}${f.maquina}${f.parte}`} className={!f.capturado ? 'bg-amber-50/40' : ''}>
                   <td className="p-2">{f.fecha.slice(5)}</td><td className="p-2">{f.turno === 'DIA' ? 'D' : 'N'}</td>
                   <td className="p-2 font-bold">{f.maquina || '¿?'}</td>
-                  <td className="p-2 font-mono">{f.parte}{f.sin_bom && <span title="No está en el BOM" className="text-amber-600"> ⚠</span>}</td>
+                  <td className="p-2 font-mono">{f.parte}{f.sin_bom ? <span title="No está en el BOM" className="text-amber-600"> ⚠</span> : f.faltan?.length > 0 && <span title={`Falta en BOM: ${f.faltan.join(", ")}`} className="text-amber-600"> ⚠</span>}{f.corte && <span title="Pieza de corte: sin meta por ciclo" className="ml-1 text-xs bg-slate-200 text-slate-600 px-1.5 rounded">corte</span>}</td>
                   <td className="p-2 text-slate-600">{f.descripcion}</td><td className="p-2">{f.cliente}</td>
                   <td className="p-2">{fmt(f.horas, 1)}</td><td className="p-2">{fmt(f.cav_real)}</td><td className="p-2">{fmt(f.ciclo_real)}</td>
                   <td className="p-2">{fmt(f.meta)}</td><td className="p-2">{fmt(f.prod_ttl)}</td><td className="p-2 font-semibold">{fmt(f.prod_buena)}</td>
