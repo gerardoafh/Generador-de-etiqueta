@@ -63,7 +63,8 @@ def fill_from_labels_db(info, labels_db):
     """Completa parte/qty/fecha con el registro de la etiqueta impresa (si existe)."""
     lbl = labels_db.get(info.get("label_id")) if info.get("label_id") else None
     if lbl:
-        info["part_number"] = info.get("part_number") or lbl.get("part_number")
+        # La etiqueta registrada al imprimir es la fuente confiable (conserva sufijos como "#6")
+        info["part_number"] = lbl.get("part_number") or info.get("part_number")
         if info.get("qty") is None:
             info["qty"] = lbl.get("qty")
         info["fecha_qr"] = info.get("fecha_qr") or lbl.get("fecha")

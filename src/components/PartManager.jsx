@@ -1,9 +1,12 @@
 import React, { useState, useEffect, useRef } from 'react';
+import BomManager from './BomManager';
 import { apiFetch } from '../api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useConfirm } from '../hooks/useConfirm.jsx';
 
 export default function PartManager({ goBack }) {
+  const [tab, setTab] = useState('partes');
+  const [soloSinQty, setSoloSinQty] = useState(false);
   const { showToast } = useToast();
   const { confirmModal, requestConfirm } = useConfirm();
 
@@ -239,6 +242,8 @@ export default function PartManager({ goBack }) {
     showToast(`${entries.length} parte${entries.length !== 1 ? 's' : ''} exportadas como CSV.`, 'success');
   };
   
+  const sinQty = Object.values(parts).filter(d => !String(d.qtu ?? '').trim() || String(d.qtu) === '0').length;
+
   return (
     <div className="p-4 md:p-8 max-w-7xl mx-auto min-h-screen flex flex-col bg-slate-50 relative">
 
@@ -261,10 +266,16 @@ export default function PartManager({ goBack }) {
           <span className="text-3xl">⚙️</span>
           <h2 className="text-xl md:text-2xl font-bold text-slate-800">Gestionar Números de Parte</h2>
         </div>
+        <div className="flex bg-slate-100 rounded-xl p-1">
+          <button onClick={() => setTab('partes')} className={`px-5 py-2 rounded-lg font-semibold text-sm transition-colors ${tab === 'partes' ? 'bg-white shadow text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}>🏷️ Partes (etiquetas)</button>
+          <button onClick={() => setTab('bom')} className={`px-5 py-2 rounded-lg font-semibold text-sm transition-colors ${tab === 'bom' ? 'bg-white shadow text-blue-700' : 'text-slate-500 hover:text-slate-700'}`}>📐 BOM</button>
+        </div>
         <button onClick={goBack} className="bg-slate-100 text-slate-600 hover:bg-slate-200 hover:text-slate-800 px-5 py-2 rounded-lg font-semibold transition-colors">Volver al Menú</button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-grow">
+      {tab === 'bom' && <BomManager confirmar={requestConfirm} />}
+
+      {tab === 'partes' && <div className="grid grid-cols-1 md:grid-cols-2 gap-6 flex-grow">
         {/* Formulario */}
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200">
           <h3 className="font-bold text-lg text-slate-800 mb-6">Datos del Número de Parte</h3>
@@ -301,7 +312,14 @@ export default function PartManager({ goBack }) {
 
         {/* Buscador y Lista */}
         <div className="bg-white p-6 md:p-8 rounded-2xl shadow-sm border border-slate-200 flex flex-col">
-          <h3 className="font-bold text-lg text-slate-800 mb-6">Listado de Partes</h3>
+          <h3 className="font-bold text-lg text-slate-800 mb-6 flex items-center gap-2 flex-wrap">Listado de Partes
+            <span className="text-xs font-semibold bg-slate-100 text-slate-500 px-2 py-0.5 rounded-full">{Object.keys(parts).length}</span>
+            {sinQty > 0 && (
+              <button type="button" onClick={() => setSoloSinQty(!soloSinQty)} className={`text-xs font-semibold px-2 py-0.5 rounded-full ${soloSinQty ? 'bg-amber-500 text-white' : 'bg-amber-100 text-amber-700'}`} title="Partes sin cantidad por etiqueta (no se pueden imprimir)">
+                {sinQty} sin Qty
+              </button>
+            )}
+          </h3>
           <div className="mb-6 relative">
             <span className="absolute inset-y-0 left-0 flex items-center pl-3 text-slate-400">🔍</span>
             <input 
@@ -323,12 +341,14 @@ export default function PartManager({ goBack }) {
               <ul className="divide-y divide-slate-100">
                 {Object.entries(parts)
                   .filter(([partNum, partDetails]) =>
-                    partNum.toUpperCase().includes(searchTerm.toUpperCase()) ||
-                    (partDetails.descripcion || '').toUpperCase().includes(searchTerm.toUpperCase())
-                  ).map(([partNum, partDetails]) => (
+                    (partNum.toUpperCase().includes(searchTerm.toUpperCase()) ||
+                    (partDetails.descripcion || '').toUpperCase().includes(searchTerm.toUpperCase())) &&
+                    (!soloSinQty || !String(partDetails.qtu ?? '').trim() || String(partDetails.qtu) === '0')
+                  ).sort(([a], [b]) => a.localeCompare(b)).map(([partNum, partDetails]) => (
                   <li key={partNum} className={`p-4 hover:bg-blue-50 cursor-pointer transition-colors flex items-center justify-between group ${selectedPartNumber === partNum ? 'bg-blue-100' : ''}`} onClick={() => handlePartSelect(partNum)}>
                     <span className="font-medium text-slate-700">
                       {partNum} <span className="text-slate-400 font-normal ml-2">- {partDetails.descripcion}</span>
+                      {(!String(partDetails.qtu ?? '').trim() || String(partDetails.qtu) === '0') && <span className="ml-2 text-xs bg-amber-100 text-amber-700 px-1.5 rounded">sin Qty</span>}
                     </span>
                     <span className="text-slate-300 group-hover:text-blue-500">•••</span>
                   </li>
@@ -362,7 +382,7 @@ export default function PartManager({ goBack }) {
             <button onClick={handleExport} className="flex-1 bg-white border border-slate-300 text-slate-700 px-4 py-2.5 rounded-xl hover:bg-slate-50 font-medium transition-colors text-sm text-center">📤 Exportar</button>
           </div>
         </div>
-      </div>
+      </div>}
     </div>
   );
 }

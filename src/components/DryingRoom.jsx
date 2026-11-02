@@ -248,7 +248,7 @@ export default function DryingRoom({ goBack }) {
         const lblRes = await apiFetch(`/labels/${labelId}`);
         if (lblRes.ok) {
           const lblData = await lblRes.json();
-          codigo = part || lblData.part_number;
+          codigo = lblData.part_number || part;
           partInfo = partData[codigo] || {
             descripcion: lblData.descripcion,
             linea: lblData.linea,

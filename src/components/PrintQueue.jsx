@@ -82,6 +82,11 @@ export default function PrintQueue({ goBack }) {
       showToast('Selecciona la máquina donde se produce la pieza.', 'warning');
       return;
     }
+    const qtuEtiqueta = String(availableParts[selectedPart]?.qtu ?? '').trim();
+    if (!qtuEtiqueta || qtuEtiqueta === '0') {
+      showToast(`${selectedPart} no tiene "Qty" por etiqueta. Captúrala en Gestor de Partes antes de imprimir.`, 'warning', 6000);
+      return;
+    }
     const qty = Number(addQty);
     if (!qty || qty < 1) {
       showToast('La cantidad debe ser mayor o igual a 1.', 'error');

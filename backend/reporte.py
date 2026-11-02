@@ -26,6 +26,7 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 LOG_FILE = os.path.join(BASE_DIR, "produccion_log.json")
 CAPT_FILE = os.path.join(BASE_DIR, "capturas_turno.json")
 BOM_FILE = os.path.join(BASE_DIR, "bom.json")
+PARTS_FILE = os.path.join(BASE_DIR, "data.json")
 LABELS_FILE = os.path.join(BASE_DIR, "generated_labels.json")
 DRYING_FILE = os.path.join(BASE_DIR, "drying_state.json")
 TZ = ZoneInfo("America/Mexico_City")
@@ -248,15 +249,131 @@ async def importar_bom(file: UploadFile = File(...)):
         }
     if not out:
         raise HTTPException(400, "No encontré filas de BOM (encabezado 'NO. PARTE' en la columna D).")
+    conservados = 0
     with _lock:
+        prev_bom = _bom()
+        # Conservar lo capturado a mano en la pestaña BOM cuando el Excel lo trae vacío
+        for k, prev in prev_bom.items():
+            if not prev.get("editado"):
+                continue
+            if k not in out:
+                out[k] = prev
+                conservados += 1
+                continue
+            for campo in ("peso", "cav", "ciclo", "densidad"):
+                if not out[k].get(campo) and prev.get(campo):
+                    out[k][campo] = prev[campo]
+                    if campo == "ciclo":
+                        out[k]["ciclo_fuente"] = "manual"
+                    conservados += 1
+            out[k]["editado"] = prev["editado"]
         _save(BOM_FILE, out)
-    return {"message": f"BOM importado: {len(out)} números de parte.", "total": len(out)}
+    extra = f" Se conservaron {conservados} dato(s) capturados a mano." if conservados else ""
+    nuevas = sincronizar_catalogo()
+    if nuevas:
+        extra += f" {nuevas} parte(s) nuevas agregadas al Gestor de Partes."
+    return {"message": f"BOM importado: {len(out)} números de parte.{extra}", "total": len(out)}
+
+
+def sincronizar_catalogo() -> int:
+    """Agrega al catálogo de etiquetas (data.json) toda parte del BOM que falte. No modifica las existentes."""
+    with _lock:
+        bom = _bom()
+        partes = _load(PARTS_FILE, {})
+        nuevas = 0
+        for k, v in bom.items():
+            if k in partes:
+                continue
+            partes[k] = {
+                "descripcion": str(v.get("descripcion") or ""),
+                "linea": "",                                  # la máquina se elige al imprimir
+                "id": str(v.get("id2") or ""),
+                "qtu": "",                                    # cantidad por etiqueta: capturar en Gestor de Partes
+                "linea_lg": str(v.get("linea") or ""),
+                "ayuda_visual": "",
+            }
+            nuevas += 1
+        if nuevas:
+            _save(PARTS_FILE, partes)
+    return nuevas
+
+
+try:
+    sincronizar_catalogo()
+except Exception as e:
+    print(f"[reporte] No se pudo sincronizar el catálogo: {e}")
+
+
+@router.post("/parts/sync-bom")
+def sync_catalogo():
+    n = sincronizar_catalogo()
+    return {"message": f"{n} parte(s) del BOM agregadas al catálogo." if n else "El catálogo ya tiene todas las partes del BOM.", "nuevas": n}
 
 
 @router.get("/bom")
 def ver_bom():
     b = _bom()
     return {"total": len(b), "partes": b}
+
+
+BOM_CAMPOS_TXT = ("linea", "modelo", "descripcion", "cliente", "id1", "id2", "resina", "tipo", "molde")
+BOM_CAMPOS_NUM = ("densidad", "peso", "cav", "ciclo")
+
+
+class BomItem(BaseModel):
+    parte: str
+    linea: Optional[str] = ""
+    modelo: Optional[str] = ""
+    descripcion: Optional[str] = ""
+    cliente: Optional[str] = ""
+    id1: Optional[str] = ""
+    id2: Optional[str] = ""
+    resina: Optional[str] = ""
+    tipo: Optional[str] = ""
+    molde: Optional[str] = ""
+    densidad: Optional[float] = None
+    peso: Optional[float] = None
+    cav: Optional[float] = None
+    ciclo: Optional[float] = None
+
+
+@router.put("/bom/{parte}")
+def guardar_bom(parte: str, item: BomItem):
+    """Crea o edita una parte del BOM. Si item.parte difiere de {parte}, la renombra."""
+    original = parte.strip().upper()
+    nuevo = (item.parte or original).strip().upper()
+    if not nuevo:
+        raise HTTPException(400, "El número de parte es obligatorio.")
+    with _lock:
+        bom = _bom()
+        if nuevo != original and nuevo in bom:
+            raise HTTPException(400, f"La parte {nuevo} ya existe en el BOM.")
+        prev = bom.pop(original, {}) if original in bom else {}
+        datos = {**prev}
+        for k in BOM_CAMPOS_TXT:
+            datos[k] = (getattr(item, k) or "").strip()
+        for k in BOM_CAMPOS_NUM:
+            v = getattr(item, k)
+            datos[k] = v if (v is not None and v > 0) else None
+        datos["corte"] = datos.get("id2", "").lower() == "cutting"
+        datos["ciclo_fuente"] = "manual" if datos.get("ciclo") != prev.get("ciclo") else prev.get("ciclo_fuente")
+        datos["editado"] = datetime.now(TZ).isoformat(timespec="seconds")
+        bom[nuevo] = datos
+        _save(BOM_FILE, bom)
+    sincronizar_catalogo()
+    return {"message": f"Parte {nuevo} guardada en el BOM.", "parte": nuevo}
+
+
+@router.delete("/bom/{parte}")
+def borrar_bom(parte: str):
+    key = parte.strip().upper()
+    with _lock:
+        bom = _bom()
+        if key not in bom:
+            raise HTTPException(404, "La parte no está en el BOM.")
+        bom.pop(key)
+        _save(BOM_FILE, bom)
+    return {"message": f"Parte {key} eliminada del BOM."}
 
 
 # ── Captura de turno ───────────────────────────────────────────────────────────
