@@ -11,6 +11,27 @@ const getTurnoActual = () => {
   return (horaDecimal >= 7.5 && horaDecimal < 19.5) ? 'DÍA' : 'NOCHE';
 };
 
+// Lectura unificada de QR (mismas reglas que backend/qr_parse.py).
+// El número de parte se toma de CUALQUIERA de los dos QR de la etiqueta:
+//   QR chico:  "MFZ62834301 ETQ-261102-AB12C"
+//   QR grande: "ID: ETQ-...\nFecha: ...\nPart Number: MFZ62834301\n..."
+// Tolera pistola con teclado en español (Ñ por ':' y ' por '-') y texto pegado.
+const parseEtiqueta = (raw) => {
+  const t = (raw || '').toUpperCase().trim();
+  const mId = t.match(/ETQ['-]?(\d{6})['-]([A-Z0-9]{5})/);
+  const labelId = mId ? `ETQ-${mId[1]}-${mId[2]}` : null;
+  let part = null;
+  const mPart = t.match(/PART\s*NUMBER\s*[:Ñ|]?\s*([A-Z0-9-]{4,}?)(?=DESCRIPTION|QTY|\s|$)/)
+             || t.match(/^([A-Z0-9-]{5,})\s+ETQ/);
+  if (mPart) part = mPart[1];
+  else if (/^[A-Z0-9_-]{5,}$/.test(t) && !t.startsWith('ETQ')) part = t;
+  const mFecha = t.match(/FECHA\s*[:Ñ]?\s*(\d{2})[/-](\d{2})[/-](\d{4})/);
+  const fecha = mFecha ? `${mFecha[1]}/${mFecha[2]}/${mFecha[3]}` : null;
+  return { labelId, part, fecha };
+};
+
+const fmtFecha = (d) => `${String(d.getDate()).padStart(2, '0')}/${String(d.getMonth() + 1).padStart(2, '0')}/${d.getFullYear()}`;
+
 // #2 — Genera un ID único para cada carrito, no se repite entre turnos
 const generarIdCarrito = () => `C-${Date.now().toString(36).toUpperCase()}`;
 
@@ -202,42 +223,44 @@ export default function DryingRoom({ goBack }) {
   // Referencia para acceder a la última versión de la función en el setTimeout
   const handleScanRef = useRef();
 
-  const handleScan = (e, overrideCodigo = null, overrideMode = null) => {
+  const handleScan = async (e, overrideCodigo = null, overrideMode = null) => {
     if (e) e.preventDefault();
     let rawText = (overrideCodigo || qrCode).trim().toUpperCase();
     if (!rawText) return;
 
-    // Validación de fecha (Evitar escanear etiquetas de días anteriores)
-    // Soporta 'Ñ' en lugar de ':' y '-' en lugar de '/' (común en pistolas con teclado español)
-    const dateMatch = rawText.match(/FECHA[Ñ:\s]*(\d{2}[/-]\d{2}[/-]\d{4})/i);
-    if (dateMatch) {
-      // Normalizar guiones a diagonales para la comparación
-      const scannedDate = dateMatch[1].replace(/-/g, '/');
-      const hoy = new Date();
-      const dd = String(hoy.getDate()).padStart(2, '0');
-      const mm = String(hoy.getMonth() + 1).padStart(2, '0');
-      const yyyy = hoy.getFullYear();
-      const todayDate = `${dd}/${mm}/${yyyy}`;
+    const { labelId, part, fecha } = parseEtiqueta(rawText);
 
-      if (scannedDate !== todayDate) {
-        showToast(`⚠️ Rechazada: Etiqueta del ${scannedDate}. Solo se permite de HOY (${todayDate}).`, 'error', 6000);
+    // Validación de fecha: hoy o ayer (turno noche que cruza medianoche)
+    if (fecha) {
+      const hoy = fmtFecha(new Date());
+      const ayer = fmtFecha(new Date(Date.now() - 86400000));
+      if (fecha !== hoy && fecha !== ayer) {
+        showToast(`⚠️ Rechazada: etiqueta del ${fecha}. Solo se permiten de hoy o ayer (turno noche).`, 'error', 6000);
         if (!overrideCodigo) setQrCode('');
         return;
       }
     }
-    // Si NO trae la palabra FECHA (ej. escaneó el QR pequeño), lo dejamos pasar asumiendo que es de hoy.
 
-    // Extraer número de parte si viene en formato completo (QR multilínea)
-    let codigo = rawText;
-    // Soporta 'Ñ' en lugar de ':' (pistolas con teclado español) y evita capturar 'DESCRIPTION' si el navegador elimina los saltos de línea
-    const matchPart = rawText.match(/(?:PART\s*)?NUMBER[Ñ:\|\s]*([A-Z0-9\-]+?)(?=\s*(?:DESCRIPTION|DESC|QTY|ID|$))/i);
-    if (matchPart) {
-      codigo = matchPart[1].trim();
+    let codigo = part || rawText;
+    let partInfo = part ? partData[part] : null;
+    if ((!part || !partInfo) && labelId) {
+      try {
+        const lblRes = await apiFetch(`/labels/${labelId}`);
+        if (lblRes.ok) {
+          const lblData = await lblRes.json();
+          codigo = part || lblData.part_number;
+          partInfo = partData[codigo] || {
+            descripcion: lblData.descripcion,
+            linea: lblData.linea,
+            qtu: lblData.qty,
+            linea_lg: lblData.cliente
+          };
+        }
+      } catch (err) { console.error(err); }
     }
 
-    const partInfo = partData[codigo];
     if (!partInfo) {
-      showToast(`Parte "${codigo}" no registrada en la base de datos.`, 'error');
+      showToast(`Parte o etiqueta "${codigo}" no registrada en el sistema.`, 'error');
       if (!overrideCodigo) setQrCode('');
       return;
     }
@@ -247,9 +270,17 @@ export default function DryingRoom({ goBack }) {
     const ahora = new Date();
 
     if (currentMode === 'ENTRADA') {
-      // Lógica de ENTRADA
-      // #2 — ID único basado en timestamp
-      const nuevoId = generarIdCarrito();
+      // Validar si la etiqueta ya está dentro en secado
+      if (labelId) {
+        const yaExiste = records.find(r => r.idCarrito === labelId && r.estado === 'EN SECADO');
+        if (yaExiste) {
+          showToast(`⚠️ La etiqueta ${labelId} ya está registrada EN SECADO.`, 'error', 4500);
+          if (!overrideCodigo) setQrCode('');
+          return;
+        }
+      }
+
+      const nuevoId = labelId || generarIdCarrito();
       const currentCount = (contadorCarritos[codigo] || 0) + 1;
       const currentAcum = (acumuladoPorParte[codigo] || 0) + qtyNum;
 
@@ -289,13 +320,36 @@ export default function DryingRoom({ goBack }) {
       showToast(`✅ ENTRADA: ${codigo} — ${qtyNum} piezas`, 'success', 2500);
 
     } else {
-      // Lógica de SALIDA (FIFO)
-      const index = [...records].reverse().findIndex(r => r.numeroParte === codigo && r.estado === 'EN SECADO');
+      // Lógica de SALIDA
+      let realIndex = -1;
 
-      if (index === -1) {
-        showToast(`No hay carritos de "${codigo}" en secado actualmente.`, 'error');
+      // 1. Si se escaneó con ID único de etiqueta, buscar exactamente ese carrito
+      if (labelId) {
+        realIndex = records.findIndex(r => r.idCarrito === labelId && r.estado === 'EN SECADO');
+        if (realIndex === -1) {
+          const yaSalio = records.find(r => r.idCarrito === labelId && r.estado === 'FINALIZADO');
+          if (yaSalio) {
+            showToast(`⚠️ La etiqueta ${labelId} ya finalizó su secado previamente.`, 'error', 4500);
+            if (!overrideCodigo) setQrCode('');
+            return;
+          }
+        }
+      }
+
+      // 2. Si no hay ID (o entró por número de parte): el carrito más antiguo de esa parte (FIFO real)
+      if (realIndex === -1) {
+        let oldest = Infinity;
+        records.forEach((r, i) => {
+          if (r.numeroParte === codigo && r.estado === 'EN SECADO') {
+            const t = new Date(r.horaEntrada).getTime();
+            if (t < oldest) { oldest = t; realIndex = i; }
+          }
+        });
+      }
+
+      if (realIndex === -1) {
+        showToast(labelId ? `No se encontró carrito activo con ID "${labelId}".` : `No hay carritos de "${codigo}" en secado actualmente.`, 'error');
       } else {
-        const realIndex = records.length - 1 - index;
         const tiempoMin = parseFloat(((ahora - new Date(records[realIndex].horaEntrada)) / 60000).toFixed(1));
 
         // ── Calcular promedio histórico de tiempoMinutos para este número de parte ──
@@ -745,7 +799,14 @@ export default function DryingRoom({ goBack }) {
                       )}
                     </td>
                     <td className="p-4 text-center text-slate-600 text-sm">{row.maquina}</td>
-                    <td className="p-4 text-center text-slate-700 font-mono text-sm">{row.numeroParte}</td>
+                    <td className="p-4 text-center text-slate-700 font-mono text-sm">
+                      <span className="font-bold">{row.numeroParte}</span>
+                      {row.idCarrito && (
+                        <span className="block text-[10px] text-blue-600 font-semibold bg-blue-50 rounded px-1.5 py-0.5 mt-0.5 w-max mx-auto border border-blue-200">
+                          {row.idCarrito}
+                        </span>
+                      )}
+                    </td>
                     <td className="p-4 text-left text-slate-600 text-sm truncate max-w-[150px]" title={row.descripcion}>{row.descripcion}</td>
                     <td className="p-4 text-left text-slate-600 text-sm">{row.cliente || ''}</td>
                     <td className="p-4 text-center font-medium text-blue-600">{row.qty}</td>

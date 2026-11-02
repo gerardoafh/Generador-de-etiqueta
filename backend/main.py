@@ -21,7 +21,11 @@ from contextlib import asynccontextmanager
 from apscheduler.schedulers.background import BackgroundScheduler
 from reporter import send_telegram_report, send_email_report
 import threading
+import random
+import string
+import re
 from telegram_bot import start_bot
+from qr_parse import parse_qr_texts, fill_from_labels_db, find_cart_for_exit
 
 scheduler = BackgroundScheduler()
 
@@ -57,6 +61,7 @@ DATA_FILE = os.path.join(BASE_DIR, 'data.json')
 LOGO_PATH = os.path.join(BASE_DIR, 'Logo.png')
 DRYING_FILE = os.path.join(BASE_DIR, 'drying_state.json')
 PRINT_QUEUE_FILE = os.path.join(BASE_DIR, 'print_queue.json')
+LABELS_FILE = os.path.join(BASE_DIR, 'generated_labels.json')
 
 # --- Modelo de Datos ---
 class PartData(BaseModel):
@@ -122,8 +127,8 @@ class GeneradorEtiquetas:
     Diseño de 6x5 pulgadas, 4 etiquetas por hoja horizontal.
     """
 
-    def _draw_single_label(self, c, part_info, part_number, cantidad_por_etiqueta, turno, label_type="standard", cart_number=None):
-        """Dibuja una sola etiqueta con el diseño de 6x5 pulgadas.
+    def _draw_single_label(self, c, part_info, part_number, cantidad_por_etiqueta, turno, label_type="standard", cart_number=None, label_id=None):
+        """Dibuja una sola etiqueta con el diseño de 6x5 pulgadas y su ID único.
 
         Layout:
           ┌──────────┬──────────────────┬────────┐
@@ -139,6 +144,8 @@ class GeneradorEtiquetas:
           │  EPP Lider        Iqc                │  ← Footer (~0.6")
           └──────────────────────────────────────┘
         """
+        if not label_id:
+            label_id = f"ETQ-{datetime.now().strftime('%y%m%d')}-{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
         default_font = "Helvetica"
         bold_font    = "Helvetica-Bold"
 
@@ -224,13 +231,16 @@ class GeneradorEtiquetas:
                      hdr_y + pad + (inner_epp_h - fs_epp * 0.72) / 2,
                      cliente_text)
 
-        # Fecha y turno
+        # Fecha, turno y ID único de etiqueta
         center_x = (ux + LOGO_BOX_W + epp_x) / 2
-        c.setFont(default_font, 12)
-        c.drawCentredString(center_x, hdr_y + HDR_H * 0.63,
+        c.setFont(default_font, 10)
+        c.drawCentredString(center_x, hdr_y + HDR_H * 0.68,
                             f"Fecha: {datetime.now().strftime('%d/%m/%Y')}")
-        c.drawCentredString(center_x, hdr_y + HDR_H * 0.28,
+        c.drawCentredString(center_x, hdr_y + HDR_H * 0.40,
                             f"Turno: {turno}")
+        c.setFont(bold_font, 10)
+        c.drawCentredString(center_x, hdr_y + HDR_H * 0.12,
+                            f"ID: {label_id}")
 
         # ════════════════════════════════════════════════════════════════════
         #  LÍNEAS ESTRUCTURALES DEL CONTENIDO
@@ -322,21 +332,26 @@ class GeneradorEtiquetas:
         #  ZONA INFERIOR DERECHA: QR codes
         # ════════════════════════════════════════════════════════════════════
         qr_size = min(QR_W - 0.22 * reportlab_inch,
-                      QR_ZH / 2 - 0.12 * reportlab_inch)
+                      QR_ZH / 2 - 0.16 * reportlab_inch)
         qr_cx = qr_x + (QR_W - qr_size) / 2
 
-        # QR 1 — número de parte (mitad superior de la zona QR)
-        qr1_y = ctn_y + QR_ZH / 2 + 0.06 * reportlab_inch
-        self._generar_qr_code(c, part_number, qr_cx, qr1_y, qr_size)
+        # QR 1 — Número de parte + ID único en una sola línea (mitad superior).
+        # Así cualquiera de los dos QR basta para identificar la parte.
+        qr1_y = ctn_y + QR_ZH / 2 + 0.10 * reportlab_inch
+        self._generar_qr_code(c, f"{part_number} {label_id}", qr_cx, qr1_y, qr_size)
+        c.setFont(bold_font, 7)
+        c.drawCentredString(qr_cx + qr_size / 2, qr1_y - 8, f"ID: {label_id}")
 
-        # QR 2 — información completa (mitad inferior de la zona QR)
-        qr_full = (f"Fecha: {datetime.now().strftime('%d/%m/%Y')}\n"
+        # QR 2 — Información completa con ID único (mitad inferior de la zona QR)
+        qr_full = (f"ID: {label_id}\n"
+                   f"Fecha: {datetime.now().strftime('%d/%m/%Y')}\n"
+                   f"Turno: {turno}\n"
                    f"Part Number: {part_number}\n"
                    f"Description: {part_info.get('descripcion', '')}\n"
                    f"Qty: {cantidad_por_etiqueta}\n"
-                   f"ID: {part_info.get('id', '')}\n"
+                   f"ID Catálogo: {part_info.get('id', '')}\n"
                    f"Línea: {part_info.get('linea', '')}")
-        qr2_y = ctn_y + 0.06 * reportlab_inch
+        qr2_y = ctn_y + 0.08 * reportlab_inch
         self._generar_qr_code(c, qr_full, qr_cx, qr2_y, qr_size)
 
         # ════════════════════════════════════════════════════════════════════
@@ -383,6 +398,19 @@ def load_drying_state():
         except json.JSONDecodeError:
             pass
     return {}
+
+def load_generated_labels():
+    if os.path.exists(LABELS_FILE):
+        try:
+            with open(LABELS_FILE, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except json.JSONDecodeError:
+            pass
+    return {}
+
+def save_generated_labels(labels):
+    with open(LABELS_FILE, 'w', encoding='utf-8') as f:
+        json.dump(labels, f, indent=4, ensure_ascii=False)
 
 # --- Endpoints (Rutas de la API) ---
 
@@ -528,6 +556,9 @@ def generate_pdf(queue: list[PrintQueueItem]):
         ]
 
         label_count_on_page = 0
+        labels_db = load_generated_labels()
+        now_iso = datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.000Z')
+        fecha_str = datetime.now().strftime('%d/%m/%Y')
 
         for item in queue:
             part_number = item.part
@@ -539,6 +570,19 @@ def generate_pdf(queue: list[PrintQueueItem]):
             qty_on_label = part_info.get('qtu', '0')
 
             for _ in range(num_labels_for_part):
+                unique_label_id = f"ETQ-{datetime.now().strftime('%y%m%d')}-{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
+                labels_db[unique_label_id] = {
+                    "id": unique_label_id,
+                    "part_number": part_number,
+                    "descripcion": part_info.get('descripcion', ''),
+                    "qty": int(qty_on_label) if str(qty_on_label).isdigit() else 0,
+                    "linea": part_info.get('linea', ''),
+                    "cliente": part_info.get('linea_lg', ''),
+                    "turno": turno,
+                    "fecha": fecha_str,
+                    "created_at": now_iso
+                }
+
                 if label_count_on_page >= 4:
                     c.showPage()
                     label_count_on_page = 0
@@ -548,10 +592,12 @@ def generate_pdf(queue: list[PrintQueueItem]):
                 c.saveState()
                 c.translate(x_offset, y_offset)
                 c.scale(scale_x, scale_y)
-                generador._draw_single_label(c, part_info, part_number, qty_on_label, turno)
+                generador._draw_single_label(c, part_info, part_number, qty_on_label, turno, label_id=unique_label_id)
                 c.restoreState()
 
                 label_count_on_page += 1
+
+        save_generated_labels(labels_db)
 
         c.save()
         buffer.seek(0)
@@ -564,23 +610,42 @@ class CameraScanPayload(BaseModel):
     qr_data: str
     action: str  # "entrada" o "salida"
 
+@app.get("/labels/{label_id}")
+def get_label_by_id(label_id: str):
+    """Devuelve los datos de una etiqueta generada por su ID único."""
+    labels_db = load_generated_labels()
+    target_id = label_id.strip().upper()
+    if target_id not in labels_db:
+        raise HTTPException(status_code=404, detail=f"Etiqueta '{target_id}' no encontrada.")
+    return labels_db[target_id]
+
 @app.post("/drying-room/scan")
 def register_camera_scan(payload: CameraScanPayload):
     """
-    Recibe un escaneo de la cámara local y registra entrada o salida.
+    Recibe un escaneo de la cámara local y registra entrada o salida identificando la etiqueta única.
     """
-    parts_db = load_data()
-    part_number = payload.qr_data.strip().upper()
-
-    part_info = parts_db.get(part_number)
-    if not part_info:
-        raise HTTPException(status_code=404, detail=f"Parte '{part_number}' no registrada.")
-
-    # Reutilizamos la lógica del bot de Telegram importando sus funciones
-    # o implementando la lógica aquí. Dado que la lógica del bot está aislada allí, 
-    # la reimplementaremos limpiamente aquí para evitar dependencias cruzadas.
+    raw_data = payload.qr_data.strip()
     
-    qty = int(part_info.get('qtu', 0))
+    labels_db = load_generated_labels()
+    parsed = fill_from_labels_db(parse_qr_texts([raw_data]), labels_db)
+    label_id = parsed['label_id']
+    part_number = parsed['part_number']
+    lbl_info = labels_db.get(label_id) if label_id else None
+
+    parts_db = load_data()
+    part_info = parts_db.get(part_number) if part_number else None
+    if not part_info and lbl_info:
+        part_info = {
+            'descripcion': lbl_info.get('descripcion', ''),
+            'linea': lbl_info.get('linea', ''),
+            'qtu': str(lbl_info.get('qty', 0)),
+            'linea_lg': lbl_info.get('cliente', ''),
+        }
+
+    if not part_info and not part_number:
+        raise HTTPException(status_code=404, detail="No se encontró la parte ni la etiqueta correspondiente.")
+
+    qty = int(part_info.get('qtu', 0)) if part_info else (lbl_info.get('qty', 0) if lbl_info else 0)
     state = load_drying_state()
     records = state.get('records', [])
     acumulado_por_parte = state.get('acumuladoPorParte', {})
@@ -590,15 +655,18 @@ def register_camera_scan(payload: CameraScanPayload):
     shift_name, _ = get_current_shift_info()
 
     if payload.action == 'entrada':
+        carrito_id = label_id or ("C-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8)))
+        if label_id:
+            for r in records:
+                if r.get('idCarrito') == label_id and r.get('estado') == 'EN SECADO':
+                    raise HTTPException(status_code=400, detail=f"La etiqueta '{label_id}' ya está EN SECADO.")
+
         prev_acumulado = acumulado_por_parte.get(part_number, 0) + qty
-        import string, random
-        new_id = "C-" + "".join(random.choices(string.ascii_uppercase + string.digits, k=8))
-        
         new_record = {
-            "idCarrito": new_id,
+            "idCarrito": carrito_id,
             "numeroParte": part_number,
-            "descripcion": part_info.get('descripcion', ''),
-            "maquina": part_info.get('linea', ''),
+            "descripcion": part_info.get('descripcion', '') if part_info else '',
+            "maquina": part_info.get('linea', '') if part_info else '',
             "qty": qty,
             "acumulado": prev_acumulado,
             "turno": shift_name,
@@ -623,15 +691,10 @@ def register_camera_scan(payload: CameraScanPayload):
         return {"message": "Entrada registrada", "record": new_record}
 
     elif payload.action == 'salida':
-        target = None
-        for r in reversed(records):
-            if r.get('numeroParte') == part_number and r.get('estado') == 'EN SECADO':
-                target = r
-                break
-                
+        target, err = find_cart_for_exit(records, label_id, part_number)
         if not target:
-            raise HTTPException(status_code=400, detail="No hay carrito EN SECADO activo para esta parte.")
-            
+            raise HTTPException(status_code=400, detail=err)
+
         hora_entrada = datetime.fromisoformat(target['horaEntrada'].replace('Z', '+00:00'))
         hora_salida = datetime.utcnow()
         minutos = round((hora_salida - hora_entrada.replace(tzinfo=None)).total_seconds() / 60, 1)

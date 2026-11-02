@@ -14,6 +14,7 @@ from PIL import Image
 from pyzbar.pyzbar import decode as qr_decode
 from dotenv import load_dotenv
 
+from qr_parse import parse_qr_texts, fill_from_labels_db, find_cart_for_exit, LABEL_ID_RE
 from reporter import get_current_shift_info, get_production_data, format_telegram_message, generate_excel_bytes
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -23,6 +24,7 @@ token = os.getenv('TELEGRAM_BOT_TOKEN')
 DRYING_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'drying_state.json')
 DATA_FILE   = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'data.json')
 TELEGRAM_QUEUE_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'telegram_queue.json')
+LABELS_FILE = os.path.join(os.path.dirname(os.path.abspath(__file__)), 'generated_labels.json')
 
 def _push_to_telegram_queue(codigo: str, action: str):
     """Agrega una acción a la cola para que el frontend muestre la notificación."""
@@ -63,34 +65,59 @@ def _gen_id() -> str:
 
 
 # ─────────────────────────────────────────────
-#  Leer QR desde bytes de imagen
+#  Leer todos los QRs desde bytes de imagen
 # ─────────────────────────────────────────────
-def _read_qr_from_bytes(image_bytes: bytes) -> str | None:
-    """Intenta leer el QR con pyzbar y OpenCV. Devuelve el texto o None."""
-    np_arr = np.frombuffer(image_bytes, np.uint8)
-    img_cv = cv2.imdecode(np_arr, cv2.IMREAD_COLOR)
+def _read_all_qrs_from_bytes(image_bytes: bytes) -> list[str]:
+    """Lee todos los QRs de la foto probando varias versiones de la imagen
+    (original, gris ecualizado, ampliada, binarizada) con pyzbar y OpenCV.
+    Pensado para fotos chuecas, lejanas o con poca luz."""
+    results: list[str] = []
 
-    # 1. pyzbar sobre imagen original
-    pil_img = Image.open(io.BytesIO(image_bytes))
-    decoded = qr_decode(pil_img)
-    if decoded:
-        return decoded[0].data.decode('utf-8', errors='ignore')
+    def _add(txt):
+        txt = (txt or '').strip()
+        if txt and txt not in results:
+            results.append(txt)
 
-    # 2. pyzbar sobre escala de grises ecualizada
-    if img_cv is not None:
-        gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
-        gray = cv2.equalizeHist(gray)
-        decoded2 = qr_decode(Image.fromarray(gray))
-        if decoded2:
-            return decoded2[0].data.decode('utf-8', errors='ignore')
+    img_cv = cv2.imdecode(np.frombuffer(image_bytes, np.uint8), cv2.IMREAD_COLOR)
+    if img_cv is None:
+        return results
 
-        # 3. Detector nativo de OpenCV
-        detector = cv2.QRCodeDetector()
-        data, _, _ = detector.detectAndDecode(img_cv)
-        if data:
-            return data
+    gray = cv2.cvtColor(img_cv, cv2.COLOR_BGR2GRAY)
+    variantes = [gray, cv2.equalizeHist(gray)]
+    if max(gray.shape) < 2500:
+        big = cv2.resize(gray, None, fx=2, fy=2, interpolation=cv2.INTER_CUBIC)
+        variantes.append(big)
+    else:
+        big = gray
+    variantes.append(cv2.threshold(big, 0, 255, cv2.THRESH_BINARY + cv2.THRESH_OTSU)[1])
+    variantes.append(cv2.adaptiveThreshold(big, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 31, 10))
 
-    return None
+    for v in variantes:
+        try:
+            for d in qr_decode(Image.fromarray(v)):
+                _add(d.data.decode('utf-8', errors='ignore'))
+        except Exception as e:
+            print(f"[QR] Error pyzbar: {e}")
+        if len(results) >= 2:   # ya tenemos los dos QR de la etiqueta
+            break
+
+    if len(results) < 2:
+        try:
+            ok, datos, _, _ = cv2.QRCodeDetector().detectAndDecodeMulti(img_cv)
+            if ok:
+                for d in datos:
+                    _add(d)
+        except Exception as e:
+            print(f"[QR] Error opencv multi: {e}")
+
+    return results
+
+
+def _parse_label_info_from_qrs(qr_texts: list[str]) -> dict:
+    """Extrae label_id, part_number, fecha_qr, qty y turno de CUALQUIERA de los QRs leídos."""
+    info = parse_qr_texts(qr_texts)
+    info['raw_text'] = "\n---\n".join(qr_texts) if qr_texts else ""
+    return fill_from_labels_db(info, _load_json(LABELS_FILE))
 
 
 # ─────────────────────────────────────────────
@@ -179,16 +206,27 @@ def _ocr_extract_part_info(image_bytes: bytes) -> dict | None:
         ocr_text = pytesseract.image_to_string(Image.fromarray(enlarged), config='--psm 6')
         print(f"[OCR] Texto extraído:\n{ocr_text}")
 
-        # El (?i) es manejado por re.IGNORECASE. Hacemos que "Part" y la "N" sean opcionales
-        # por si la foto está cortada (ej. "art Number" o "umber")
+        # Buscar ID de etiqueta en OCR si está presente
+        id_match = LABEL_ID_RE.search(ocr_text.upper())
+        label_id = f"ETQ-{id_match.group(1)}-{id_match.group(2)}" if id_match else None
+
         part_match = re.search(r'(?:P?art\s*)?N?umber\s*[:\|]?\s*([A-Z0-9]{5,20})', ocr_text, re.IGNORECASE)
         qty_match  = re.search(r'Qty\s*[:\|]?\s*(\d+)', ocr_text, re.IGNORECASE)
 
         ocr_raw = part_match.group(1).strip().upper() if part_match else None
         qty     = int(qty_match.group(1)) if qty_match else None
 
-        if ocr_raw:
-            return {'part_number': ocr_raw, 'qty': qty, 'ocr_raw': ocr_raw}
+        # Si tenemos label_id, consultar base de etiquetas generadas
+        labels_db = _load_json(LABELS_FILE)
+        if label_id and label_id in labels_db:
+            lbl = labels_db[label_id]
+            if not ocr_raw:
+                ocr_raw = lbl.get('part_number')
+            if not qty:
+                qty = lbl.get('qty')
+
+        if ocr_raw or label_id:
+            return {'part_number': ocr_raw, 'qty': qty, 'ocr_raw': ocr_raw or label_id, 'label_id': label_id}
 
     except ImportError:
         print("[OCR] pytesseract no instalado.")
@@ -230,18 +268,27 @@ def _parse_part_number_from_qr(qr_text: str) -> tuple[str | None, str | None]:
 # ─────────────────────────────────────────────
 #  Operaciones en el cuarto de secado
 # ─────────────────────────────────────────────
-def _registrar_entrada(part_number: str, part_info: dict, qty: int) -> dict:
-    """Agrega un carrito al cuarto de secado con estado 'EN SECADO'."""
+def _registrar_entrada(part_number: str, part_info: dict, qty: int, label_id: str | None = None) -> tuple[dict | None, str]:
+    """Agrega un carrito al cuarto de secado con estado 'EN SECADO' asignando su ID único."""
     state               = _load_json(DRYING_FILE)
     records             = state.get('records', [])
     acumulado_por_parte = state.get('acumuladoPorParte', {})
     contador_carritos   = state.get('contadorCarritos', {})
 
     shift_name, _ = get_current_shift_info()
+    carrito_id    = label_id or _gen_id()
+
+    # Si se escaneó con ID único, validar que no esté ya dentro
+    if label_id:
+        for r in records:
+            if r.get('idCarrito') == label_id and r.get('estado') == 'EN SECADO':
+                hora_in = r.get('horaEntrada', '')[:16].replace('T', ' ')
+                return None, f"⚠️ La etiqueta `{label_id}` ya está registrada *EN SECADO* desde {hora_in}."
+
     prev_acumulado = acumulado_por_parte.get(part_number, 0) + qty
 
     new_record = {
-        "idCarrito":    _gen_id(),
+        "idCarrito":    carrito_id,
         "numeroParte":  part_number,
         "descripcion":  part_info.get('descripcion', ''),
         "maquina":      part_info.get('linea', ''),
@@ -266,22 +313,17 @@ def _registrar_entrada(part_number: str, part_info: dict, qty: int) -> dict:
 
     _save_json(DRYING_FILE, state)
     _push_to_telegram_queue(part_number, 'ENTRADA')
-    return new_record
+    return new_record, "OK"
 
 
-def _registrar_salida(part_number: str) -> dict | None:
-    """Marca el carrito EN SECADO más reciente de esa parte como FINALIZADO."""
+def _registrar_salida(part_number: str | None, label_id: str | None = None) -> tuple[dict | None, str]:
+    """Marca como FINALIZADO el carrito correspondiente a esa etiqueta única o al FIFO de la parte."""
     state   = _load_json(DRYING_FILE)
     records = state.get('records', [])
 
-    target = None
-    for r in reversed(records):
-        if r.get('numeroParte') == part_number and r.get('estado') == 'EN SECADO':
-            target = r
-            break
-
+    target, err = find_cart_for_exit(records, label_id, part_number)
     if target is None:
-        return None
+        return None, f"⚠️ {err}"
 
     hora_entrada = datetime.fromisoformat(target['horaEntrada'].replace('Z', '+00:00'))
     hora_salida  = datetime.utcnow()
@@ -292,8 +334,8 @@ def _registrar_salida(part_number: str) -> dict | None:
     target['tiempoMinutos'] = minutos
 
     _save_json(DRYING_FILE, state)
-    _push_to_telegram_queue(part_number, 'SALIDA')
-    return target
+    _push_to_telegram_queue(target.get('numeroParte', ''), 'SALIDA')
+    return target, "OK"
 
 
 # ─────────────────────────────────────────────
@@ -307,108 +349,102 @@ def _procesar_foto_con_accion(bot: telebot.TeleBot, chat_id: int,
     Luego ejecuta la acción (entrada/salida) o espera confirmación.
     """
     parts_db = _load_json(DATA_FILE)
+    labels_db = _load_json(LABELS_FILE)
 
-    # ── 1. Intentar QR ───────────────────────────────────────────────────────
-    qr_text = _read_qr_from_bytes(image_bytes)
+    # ── 1. Intentar decodificar QRs (cualquiera de los dos sirve) ──────────
+    qr_texts = _read_all_qrs_from_bytes(image_bytes)
+    parsed = _parse_label_info_from_qrs(qr_texts) if qr_texts else {}
+    label_id     = parsed.get('label_id')
+    part_number  = parsed.get('part_number')
+    fecha_qr     = parsed.get('fecha_qr')
+    detected_qty = parsed.get('qty')
+    print(f"[QR] Leídos {len(qr_texts)} QR → parte={part_number} id={label_id}")
 
-    if qr_text:
-        part_number, fecha_qr = _parse_part_number_from_qr(qr_text)
+    # ── 2. Si ningún QR trajo el número de parte, leer el texto impreso (OCR) ─
+    if not part_number:
+        bot.send_message(chat_id, "🔍 No pude leer el QR completo, leyendo el texto de la etiqueta...")
+        ocr_result = _ocr_extract_part_info(image_bytes) or {}
+        label_id = label_id or ocr_result.get('label_id')
+        detected_qty = detected_qty or ocr_result.get('qty')
+        if label_id and label_id in labels_db:
+            part_number = labels_db[label_id].get('part_number')
+            fecha_qr = fecha_qr or labels_db[label_id].get('fecha')
+            detected_qty = detected_qty or labels_db[label_id].get('qty')
+        ocr_raw = ocr_result.get('ocr_raw') if ocr_result.get('part_number') else None
+        if not part_number and ocr_raw:
+            matched = _fuzzy_match_part(ocr_raw, parts_db)
+            if matched:
+                part_number = matched
+                if matched != ocr_raw:
+                    bot.send_message(chat_id, f"📝 OCR leyó `{ocr_raw}` → corregido a `{matched}`", parse_mode="Markdown")
         if not part_number:
             bot.send_message(chat_id,
-                f"⚠️ Leí el QR pero no encontré el número de parte.\n"
-                f"Contenido QR:\n`{qr_text[:200]}`", parse_mode="Markdown")
-            return
-
-        # ── Validar fecha del QR grande (solo para ENTRADA) ─────────────────
-        # En SALIDA no validamos: la etiqueta fue generada cuando el carrito
-        # entró al secado, puede ser de ayer (turno noche cruzando medianoche).
-        if fecha_qr and accion == 'entrada':
-            from datetime import timedelta
-            hoy     = datetime.now().strftime('%d/%m/%Y')
-            ayer    = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
-            if fecha_qr not in (hoy, ayer):
-                bot.send_message(chat_id,
-                    f"⛔ *Etiqueta rechazada*\n"
-                    f"La fecha del QR es *{fecha_qr}*, pero hoy es *{hoy}*.\n"
-                    f"Solo se permiten etiquetas generadas *hoy* o *ayer* "
-                    f"(turno noche).",
-                    parse_mode="Markdown")
-                return
-
-        ocr_qty    = None
-        via_ocr    = False
-        ocr_raw    = None
-    else:
-        # ── 2. Fallback OCR ──────────────────────────────────────────────────
-        bot.send_message(chat_id, "🔍 QR no detectado, leyendo texto de la etiqueta...")
-        ocr_result = _ocr_extract_part_info(image_bytes)
-
-        if not ocr_result:
-            bot.send_message(chat_id,
-                "⚠️ No pude leer ni el QR ni el texto de la etiqueta.\n"
-                "Envía la foto con mejor iluminación o usa el comando:\n"
-                "`entrada MCZ60014601`",
+                "⚠️ No pude leer el número de parte en la foto.\n"
+                "Toma la foto más cerca y de frente al QR, o usa el comando manual:\n"
+                "`entrada MFZ62834301`",
                 parse_mode="Markdown")
             return
 
-        ocr_raw  = ocr_result['ocr_raw']
-        ocr_qty  = ocr_result.get('qty')
-        via_ocr  = True
-
-        # 2a. Corrección + búsqueda difusa
-        matched = _fuzzy_match_part(ocr_raw, parts_db)
-        if matched:
-            part_number = matched
-            if matched != ocr_raw:
-                bot.send_message(chat_id,
-                    f"📝 OCR leyó `{ocr_raw}` → corregido a `{matched}`",
-                    parse_mode="Markdown")
-            else:
-                bot.send_message(chat_id,
-                    f"📝 Texto leído por OCR: `{part_number}`",
-                    parse_mode="Markdown")
-        else:
+    # ── Validar fecha de la etiqueta (solo ENTRADA): hoy o ayer (turno noche) ─
+    if fecha_qr and accion == 'entrada':
+        from datetime import timedelta
+        hoy  = datetime.now().strftime('%d/%m/%Y')
+        ayer = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
+        if fecha_qr not in (hoy, ayer):
             bot.send_message(chat_id,
-                f"⚠️ OCR leyó `{ocr_raw}` pero no encontré una parte similar en el sistema.\n"
-                f"Usa el comando manual: `entrada {ocr_raw}`",
+                f"⛔ *Etiqueta rechazada*\n"
+                f"La fecha de la etiqueta es *{fecha_qr}*, pero hoy es *{hoy}*.\n"
+                f"Solo se permiten etiquetas de *hoy* o *ayer* (turno noche).",
                 parse_mode="Markdown")
             return
 
     # ── 3. Buscar datos en la base ───────────────────────────────────────────
-    part_info = parts_db.get(part_number)
+    part_info = parts_db.get(part_number) if part_number else None
+    if not part_info and label_id and label_id in labels_db:
+        part_info = {
+            'descripcion': labels_db[label_id].get('descripcion', ''),
+            'linea': labels_db[label_id].get('linea', ''),
+            'qtu': str(labels_db[label_id].get('qty', 0)),
+            'linea_lg': labels_db[label_id].get('cliente', ''),
+        }
+        if not part_number:
+            part_number = labels_db[label_id].get('part_number', 'DESCONOCIDO')
+
     if not part_info:
         bot.send_message(chat_id,
             f"⚠️ La parte `{part_number}` no está registrada en el sistema.",
             parse_mode="Markdown")
         return
 
-    qty = ocr_qty if ocr_qty else int(part_info.get('qtu', 0))
+    qty = detected_qty if detected_qty else int(part_info.get('qtu', 0))
 
     # ── 4. Ejecutar acción ───────────────────────────────────────────────────
     if accion == 'entrada':
-        record = _registrar_entrada(part_number, part_info, qty)
-        bot.send_message(chat_id,
-            f"✅ *Entrada registrada*\n"
-            f"🏷 Parte: `{part_number}`\n"
-            f"📋 Descripción: {part_info.get('descripcion', '')}\n"
-            f"📦 Qty: {qty} pzas\n"
-            f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
-            parse_mode="Markdown")
+        record, err = _registrar_entrada(part_number, part_info, qty, label_id=label_id)
+        if record is None:
+            bot.send_message(chat_id, err, parse_mode="Markdown")
+        else:
+            id_txt = f"\n🆔 ID: `{record['idCarrito']}`" if record.get('idCarrito') else ""
+            bot.send_message(chat_id,
+                f"✅ *Entrada registrada*{id_txt}\n"
+                f"🏷 Parte: `{part_number}`\n"
+                f"📋 Descripción: {part_info.get('descripcion', '')}\n"
+                f"📦 Qty: {qty} pzas\n"
+                f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
+                parse_mode="Markdown")
         _pending_part.pop(chat_id, None)
 
     elif accion == 'salida':
-        record = _registrar_salida(part_number)
+        record, err = _registrar_salida(part_number, label_id=label_id)
         if record is None:
-            bot.send_message(chat_id,
-                f"⚠️ No encontré un carrito *EN SECADO* activo para `{part_number}`.\n"
-                f"Verifica en el sistema si ya fue registrado.",
-                parse_mode="Markdown")
+            bot.send_message(chat_id, err, parse_mode="Markdown")
         else:
+            id_txt = f"\n🆔 ID: `{record.get('idCarrito', '')}`" if record.get('idCarrito') else ""
             bot.send_message(chat_id,
-                f"✅ *Salida registrada*\n"
-                f"🏷 Parte: `{part_number}`\n"
-                f"📋 Descripción: {record['descripcion']}\n"
-                f"⏱ Tiempo en secado: {record['tiempoMinutos']} min\n"
+                f"✅ *Salida registrada*{id_txt}\n"
+                f"🏷 Parte: `{record.get('numeroParte', part_number)}`\n"
+                f"📋 Descripción: {record.get('descripcion', '')}\n"
+                f"⏱ Tiempo en secado: *{record['tiempoMinutos']} min*\n"
                 f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
                 parse_mode="Markdown")
         _pending_part.pop(chat_id, None)
@@ -419,9 +455,12 @@ def _procesar_foto_con_accion(bot: telebot.TeleBot, chat_id: int,
             'part_number': part_number,
             'part_info':   part_info,
             'qty':         qty,
+            'label_id':    label_id,
+            'fecha_qr':    fecha_qr,
         }
+        id_badge = f"\n🆔 ID Etiqueta: `{label_id}`" if label_id else ""
         bot.send_message(chat_id,
-            f"📷 Etiqueta leída correctamente:\n"
+            f"📷 Etiqueta leída correctamente:{id_badge}\n"
             f"🏷 Parte: `{part_number}`\n"
             f"📋 Descripción: {part_info.get('descripcion', '')}\n"
             f"📦 Qty: {qty} pzas\n\n"
@@ -454,48 +493,77 @@ if token:
         text    = (message.text or "").strip().lower()
         chat_id = message.chat.id
 
-        # ── Comando manual: "entrada MCZ60014601" / "salida MCZ60014601" ─────
-        match_cmd = re.match(r'^(entrada|salida)\s+([A-Za-z0-9_\-]{4,})$', text.strip())
+        # ── Comando manual: "entrada ETQ-..." / "salida ETQ-..." / "entrada MCZ..."
+        match_cmd = re.match(r'^(entrada|salida)\s+([A-Za-z0-9_\-]+)$', text.strip())
         if match_cmd:
             accion_manual = match_cmd.group(1)
-            part_number   = match_cmd.group(2).upper()
+            target_code   = match_cmd.group(2).upper()
+            labels_db     = _load_json(LABELS_FILE)
             parts_db      = _load_json(DATA_FILE)
-            part_info     = parts_db.get(part_number)
+
+            label_id = None
+            part_number = target_code
+
+            # Si es un código de etiqueta único (ej. ETQ-...)
+            if target_code.startswith('ETQ-') or target_code in labels_db:
+                label_id = target_code
+                if label_id in labels_db:
+                    part_number = labels_db[label_id].get('part_number')
+
+            part_info = parts_db.get(part_number)
+            if not part_info and label_id and label_id in labels_db:
+                part_info = {
+                    'descripcion': labels_db[label_id].get('descripcion', ''),
+                    'linea': labels_db[label_id].get('linea', ''),
+                    'qtu': str(labels_db[label_id].get('qty', 0)),
+                    'linea_lg': labels_db[label_id].get('cliente', ''),
+                }
+
             if not part_info:
-                # Intentar fuzzy match también para el comando manual
-                matched = _fuzzy_match_part(part_number, parts_db)
-                if matched:
-                    part_info   = parts_db[matched]
-                    bot.send_message(chat_id,
-                        f"📝 `{part_number}` → corregido a `{matched}`",
-                        parse_mode="Markdown")
-                    part_number = matched
+                # Intentar fuzzy match para el comando manual si no fue ID
+                if not label_id:
+                    matched = _fuzzy_match_part(part_number, parts_db)
+                    if matched:
+                        part_info   = parts_db[matched]
+                        bot.send_message(chat_id,
+                            f"📝 `{part_number}` → corregido a `{matched}`",
+                            parse_mode="Markdown")
+                        part_number = matched
+                    else:
+                        bot.send_message(chat_id,
+                            f"⚠️ La parte o etiqueta `{target_code}` no está registrada en el sistema.",
+                            parse_mode="Markdown")
+                        return
                 else:
                     bot.send_message(chat_id,
-                        f"⚠️ La parte `{part_number}` no está registrada en el sistema.",
+                        f"⚠️ La etiqueta `{label_id}` no se encuentra en el historial.",
                         parse_mode="Markdown")
                     return
-            qty = int(part_info.get('qtu', 0))
+
+            qty = int(part_info.get('qtu', 0)) if part_info else 0
             if accion_manual == 'entrada':
-                _registrar_entrada(part_number, part_info, qty)
-                bot.send_message(chat_id,
-                    f"✅ *Entrada manual registrada*\n"
-                    f"🏷 Parte: `{part_number}`\n"
-                    f"📋 Descripción: {part_info.get('descripcion', '')}\n"
-                    f"📦 Qty: {qty} pzas\n"
-                    f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
-                    parse_mode="Markdown")
-            else:
-                record = _registrar_salida(part_number)
+                record, err = _registrar_entrada(part_number, part_info, qty, label_id=label_id)
                 if record is None:
-                    bot.send_message(chat_id,
-                        f"⚠️ No encontré un carrito *EN SECADO* activo para `{part_number}`.",
-                        parse_mode="Markdown")
+                    bot.send_message(chat_id, err, parse_mode="Markdown")
                 else:
+                    id_txt = f"\n🆔 ID: `{record['idCarrito']}`" if record.get('idCarrito') else ""
                     bot.send_message(chat_id,
-                        f"✅ *Salida manual registrada*\n"
+                        f"✅ *Entrada manual registrada*{id_txt}\n"
                         f"🏷 Parte: `{part_number}`\n"
-                        f"⏱ Tiempo en secado: {record['tiempoMinutos']} min\n"
+                        f"📋 Descripción: {part_info.get('descripcion', '')}\n"
+                        f"📦 Qty: {qty} pzas\n"
+                        f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
+                        parse_mode="Markdown")
+            else:
+                record, err = _registrar_salida(part_number, label_id=label_id)
+                if record is None:
+                    bot.send_message(chat_id, err, parse_mode="Markdown")
+                else:
+                    id_txt = f"\n🆔 ID: `{record.get('idCarrito', '')}`" if record.get('idCarrito') else ""
+                    bot.send_message(chat_id,
+                        f"✅ *Salida manual registrada*{id_txt}\n"
+                        f"🏷 Parte: `{record.get('numeroParte', part_number)}`\n"
+                        f"⏱ Tiempo en secado: *{record['tiempoMinutos']} min*\n"
                         f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
                         parse_mode="Markdown")
             return
@@ -506,27 +574,43 @@ if token:
             part_number = pending['part_number']
             part_info   = pending['part_info']
             qty         = pending['qty']
+            label_id    = pending.get('label_id')
+
+            fecha_qr = pending.get('fecha_qr')
+            if text == 'entrada' and fecha_qr:
+                from datetime import timedelta
+                hoy  = datetime.now().strftime('%d/%m/%Y')
+                ayer = (datetime.now() - timedelta(days=1)).strftime('%d/%m/%Y')
+                if fecha_qr not in (hoy, ayer):
+                    bot.send_message(chat_id,
+                        f"⛔ *Etiqueta rechazada*: la fecha de la etiqueta es *{fecha_qr}* y hoy es *{hoy}*.",
+                        parse_mode="Markdown")
+                    _pending_part.pop(chat_id, None)
+                    return
 
             if text == 'entrada':
-                _registrar_entrada(part_number, part_info, qty)
-                bot.send_message(chat_id,
-                    f"✅ *Entrada registrada*\n"
-                    f"🏷 Parte: `{part_number}`\n"
-                    f"📋 Descripción: {part_info.get('descripcion', '')}\n"
-                    f"📦 Qty: {qty} pzas\n"
-                    f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
-                    parse_mode="Markdown")
-            else:
-                record = _registrar_salida(part_number)
+                record, err = _registrar_entrada(part_number, part_info, qty, label_id=label_id)
                 if record is None:
-                    bot.send_message(chat_id,
-                        f"⚠️ No encontré un carrito *EN SECADO* activo para `{part_number}`.",
-                        parse_mode="Markdown")
+                    bot.send_message(chat_id, err, parse_mode="Markdown")
                 else:
+                    id_txt = f"\n🆔 ID: `{record['idCarrito']}`" if record.get('idCarrito') else ""
                     bot.send_message(chat_id,
-                        f"✅ *Salida registrada*\n"
+                        f"✅ *Entrada registrada*{id_txt}\n"
                         f"🏷 Parte: `{part_number}`\n"
-                        f"⏱ Tiempo en secado: {record['tiempoMinutos']} min\n"
+                        f"📋 Descripción: {part_info.get('descripcion', '')}\n"
+                        f"📦 Qty: {qty} pzas\n"
+                        f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
+                        parse_mode="Markdown")
+            else:
+                record, err = _registrar_salida(part_number, label_id=label_id)
+                if record is None:
+                    bot.send_message(chat_id, err, parse_mode="Markdown")
+                else:
+                    id_txt = f"\n🆔 ID: `{record.get('idCarrito', '')}`" if record.get('idCarrito') else ""
+                    bot.send_message(chat_id,
+                        f"✅ *Salida registrada*{id_txt}\n"
+                        f"🏷 Parte: `{record.get('numeroParte', part_number)}`\n"
+                        f"⏱ Tiempo en secado: *{record['tiempoMinutos']} min*\n"
                         f"🕐 Hora: {datetime.now().strftime('%H:%M:%S')}",
                         parse_mode="Markdown")
 
