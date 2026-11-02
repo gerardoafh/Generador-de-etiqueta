@@ -4,8 +4,10 @@ import { apiFetch } from '../api';
 import { useToast } from '../hooks/useToast.jsx';
 import { useConfirm } from '../hooks/useConfirm.jsx';
 
-export default function PartManager({ goBack }) {
-  const [tab, setTab] = useState('partes');
+export default function PartManager({ goBack, tab: tabProp, onTab }) {
+  const [tabLocal, setTabLocal] = useState('partes');
+  const tab = tabProp ?? tabLocal;
+  const setTab = onTab ?? setTabLocal;
   const [soloSinQty, setSoloSinQty] = useState(false);
   const { showToast } = useToast();
   const { confirmModal, requestConfirm } = useConfirm();

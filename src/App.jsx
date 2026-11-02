@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import MainMenu from './components/MainMenu';
 import PartManager from './components/PartManager';
 import DryingRoom from './components/DryingRoom';
@@ -9,14 +9,34 @@ import ReporteSimple from './components/ReporteSimple';
 import { ToastProvider } from './hooks/useToast.jsx';
 import './App.css';
 
+// Cada módulo tiene su dirección (#/partes, #/secado…) para que funcionen las flechas
+// Atrás/Adelante del navegador y del mouse, y para que al recargar se quede en el mismo módulo.
+const RUTAS = {
+  menu: '', parts: 'partes', bom: 'bom', queue: 'cola', drying: 'secado',
+  captura: 'captura', simple: 'reporte-simple', report: 'reporte',
+};
+const vistaDesdeHash = () => {
+  const slug = window.location.hash.replace(/^#\/?/, '').split('?')[0];
+  return Object.keys(RUTAS).find(k => RUTAS[k] === slug) || 'menu';
+};
+
 function App() {
-  const [view, setView] = useState('menu');
+  const [view, setView] = useState(vistaDesdeHash);
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
 
-  // Navega a la nueva vista y cierra el menú hamburguesa automáticamente
+  // Escuchar Atrás/Adelante del navegador
+  useEffect(() => {
+    const onHash = () => { setView(vistaDesdeHash()); setIsMobileMenuOpen(false); window.scrollTo(0, 0); };
+    window.addEventListener('hashchange', onHash);
+    return () => window.removeEventListener('hashchange', onHash);
+  }, []);
+
+  // Navega a la nueva vista (queda en el historial) y cierra el menú hamburguesa
   const changeView = (newView) => {
-    setView(newView);
     setIsMobileMenuOpen(false);
+    const destino = `#/${RUTAS[newView] ?? ''}`;
+    if (window.location.hash !== destino) window.location.hash = destino;
+    else setView(newView);
   };
 
   return (
@@ -40,7 +60,7 @@ function App() {
 
             {/* Navegación Desktop */}
             <nav className="hidden md:flex gap-2">
-              <button onClick={() => changeView('parts')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'parts' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>⚙️ Partes</button>
+              <button onClick={() => changeView('parts')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'parts' || view === 'bom' ? 'bg-blue-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>⚙️ Partes</button>
               <button onClick={() => changeView('queue')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'queue' ? 'bg-green-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>🖨️ Cola</button>
               <button onClick={() => changeView('drying')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'drying' ? 'bg-orange-500 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>♨️ Secado</button>
               <button onClick={() => changeView('captura')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'captura' ? 'bg-teal-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>📝 Captura</button>
@@ -74,7 +94,7 @@ function App() {
 
       <div className="flex-grow">
         {view === 'menu' && <MainMenu setView={changeView} />}
-        {view === 'parts' && <PartManager goBack={() => changeView('menu')} />}
+        {(view === 'parts' || view === 'bom') && <PartManager goBack={() => changeView('menu')} tab={view === 'bom' ? 'bom' : 'partes'} onTab={(t) => changeView(t === 'bom' ? 'bom' : 'parts')} />}
         {view === 'drying' && <DryingRoom goBack={() => changeView('menu')} />}
         {view === 'queue' && <PrintQueue goBack={() => changeView('menu')} />}
         {view === 'captura' && <CapturaTurno goBack={() => changeView('menu')} />}
