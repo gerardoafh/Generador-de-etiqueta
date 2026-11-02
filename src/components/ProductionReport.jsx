@@ -86,7 +86,7 @@ export default function ProductionReport({ goBack }) {
           <div className="flex items-center gap-3">
             <span className="text-3xl">📊</span>
             <div>
-              <h2 className="text-xl md:text-2xl font-bold text-slate-800">Reporte de Producción</h2>
+              <h2 className="text-xl md:text-2xl font-bold text-slate-800">Reporte de Producción Completo</h2>
               <p className="text-sm text-slate-500">Producción = entradas al cuarto de secado · Meta = 3600 / ciclo BOM × cav. real × horas{bomTotal != null && <> · BOM: <b>{bomTotal}</b> partes</>}</p>
             </div>
           </div>

@@ -5,6 +5,7 @@ import DryingRoom from './components/DryingRoom';
 import PrintQueue from './components/PrintQueue';
 import ProductionReport from './components/ProductionReport';
 import CapturaTurno from './components/CapturaTurno';
+import ReporteSimple from './components/ReporteSimple';
 import { ToastProvider } from './hooks/useToast.jsx';
 import './App.css';
 
@@ -43,7 +44,8 @@ function App() {
               <button onClick={() => changeView('queue')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'queue' ? 'bg-green-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>🖨️ Cola</button>
               <button onClick={() => changeView('drying')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'drying' ? 'bg-orange-500 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>♨️ Secado</button>
               <button onClick={() => changeView('captura')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'captura' ? 'bg-teal-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>📝 Captura</button>
-              <button onClick={() => changeView('report')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'report' ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>📊 Reporte</button>
+              <button onClick={() => changeView('simple')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'simple' ? 'bg-indigo-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>📋 Rep. Simple</button>
+              <button onClick={() => changeView('report')} className={`px-3 py-2 rounded-lg font-medium text-sm transition-colors ${view === 'report' ? 'bg-purple-600 text-white' : 'text-slate-300 hover:bg-slate-800'}`}>📊 Rep. Completo</button>
             </nav>
 
             {/* Botón Menú Hamburguesa (Mobile) */}
@@ -63,7 +65,8 @@ function App() {
               <button onClick={() => changeView('queue')} className={`p-4 text-left font-medium border-b border-slate-800 hover:bg-slate-800 ${view === 'queue' ? 'text-green-400 bg-slate-800' : 'text-slate-300'}`}>🖨️ Cola de Impresión</button>
               <button onClick={() => changeView('drying')} className={`p-4 text-left font-medium border-b border-slate-800 hover:bg-slate-800 ${view === 'drying' ? 'text-orange-400 bg-slate-800' : 'text-slate-300'}`}>♨️ Cuarto de Secado</button>
               <button onClick={() => changeView('captura')} className={`p-4 text-left font-medium border-b border-slate-800 hover:bg-slate-800 ${view === 'captura' ? 'text-teal-400 bg-slate-800' : 'text-slate-300'}`}>📝 Captura de Turno</button>
-              <button onClick={() => changeView('report')} className={`p-4 text-left font-medium hover:bg-slate-800 ${view === 'report' ? 'text-purple-400 bg-slate-800' : 'text-slate-300'}`}>📊 Reporte de Producción</button>
+              <button onClick={() => changeView('simple')} className={`p-4 text-left font-medium border-b border-slate-800 hover:bg-slate-800 ${view === 'simple' ? 'text-indigo-400 bg-slate-800' : 'text-slate-300'}`}>📋 Reporte Simple</button>
+              <button onClick={() => changeView('report')} className={`p-4 text-left font-medium hover:bg-slate-800 ${view === 'report' ? 'text-purple-400 bg-slate-800' : 'text-slate-300'}`}>📊 Reporte Completo</button>
             </div>
           )}
         </header>
@@ -75,6 +78,7 @@ function App() {
         {view === 'drying' && <DryingRoom goBack={() => changeView('menu')} />}
         {view === 'queue' && <PrintQueue goBack={() => changeView('menu')} />}
         {view === 'captura' && <CapturaTurno goBack={() => changeView('menu')} />}
+        {view === 'simple' && <ReporteSimple goBack={() => changeView('menu')} />}
         {view === 'report' && <ProductionReport goBack={() => changeView('menu')} />}
       </div>
     </div>

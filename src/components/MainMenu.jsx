@@ -249,7 +249,7 @@ export default function MainMenu({ setView }) {
           <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
             <span className="text-blue-500">⚡</span> Módulos del Sistema
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
 
             <div onClick={() => setView('parts')} className="bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-slate-100 hover:border-blue-300 transition-all duration-300 cursor-pointer group flex flex-col h-full">
               <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-2xl mb-6 group-hover:scale-110 group-hover:bg-blue-600 group-hover:text-white transition-all">⚙️</div>
@@ -279,9 +279,16 @@ export default function MainMenu({ setView }) {
               <div className="text-teal-600 font-semibold text-sm flex items-center gap-2 group-hover:translate-x-2 transition-transform">Acceder al módulo <span>→</span></div>
             </div>
 
+            <div onClick={() => setView('simple')} className="bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-slate-100 hover:border-indigo-300 transition-all duration-300 cursor-pointer group flex flex-col h-full">
+              <div className="w-14 h-14 bg-indigo-50 text-indigo-600 rounded-2xl flex items-center justify-center text-2xl mb-6 group-hover:scale-110 group-hover:bg-indigo-600 group-hover:text-white transition-all">📋</div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Reporte Simple</h3>
+              <p className="text-slate-500 text-sm flex-grow mb-6">Lotes y piezas ingresadas al secado por parte y turno; exporta a CSV.</p>
+              <div className="text-indigo-600 font-semibold text-sm flex items-center gap-2 group-hover:translate-x-2 transition-transform">Acceder al módulo <span>→</span></div>
+            </div>
+
             <div onClick={() => setView('report')} className="bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-slate-100 hover:border-purple-300 transition-all duration-300 cursor-pointer group flex flex-col h-full">
               <div className="w-14 h-14 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center text-2xl mb-6 group-hover:scale-110 group-hover:bg-purple-600 group-hover:text-white transition-all">📊</div>
-              <h3 className="text-lg font-bold text-slate-800 mb-2">Reporte de Prod.</h3>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Reporte Completo</h3>
               <p className="text-slate-500 text-sm flex-grow mb-6">Meta vs resultado, scrap y paros por turno y máquina; exporta al Excel mensual.</p>
               <div className="text-purple-600 font-semibold text-sm flex items-center gap-2 group-hover:translate-x-2 transition-transform">Acceder al módulo <span>→</span></div>
             </div>
