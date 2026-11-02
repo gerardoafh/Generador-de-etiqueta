@@ -34,3 +34,4 @@ deploy_log.txt
 .respaldo_*/
 backend/generated_labels.json
 backend/telegram_queue.json
+agente_log.jsonl

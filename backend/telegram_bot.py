@@ -16,6 +16,96 @@ from dotenv import load_dotenv
 
 from qr_parse import parse_qr_texts, fill_from_labels_db, find_cart_for_exit, LABEL_ID_RE
 from reporte import registrar_en_log
+import agente
+
+
+# ─────────────────────────────────────────────
+#  Agente analista (consultas en lenguaje natural)
+# ─────────────────────────────────────────────
+def _chats_autorizados() -> set:
+    ids = set()
+    for var in ("TELEGRAM_CHAT_ID", "TELEGRAM_ALLOWED_CHATS"):
+        for x in (os.getenv(var) or "").split(","):
+            x = x.strip().strip('"')
+            if x and x != "tu_chat_id_aqui":
+                ids.add(x)
+    return ids
+
+
+_bot_username = None
+
+
+def _me_hablan(bot, message) -> bool:
+    """En grupos solo responder si mencionan al bot o le contestan un mensaje."""
+    global _bot_username
+    if message.chat.type not in ("group", "supergroup"):
+        return True
+    try:
+        if _bot_username is None:
+            _bot_username = (bot.get_me().username or "").lower()
+    except Exception:
+        _bot_username = ""
+    txt = (message.text or "").lower()
+    rep = message.reply_to_message
+    return (_bot_username and f"@{_bot_username}" in txt) or bool(rep and rep.from_user and rep.from_user.is_bot)
+
+
+def _enviar_largo(bot, chat_id, texto):
+    texto = agente.a_markdown_telegram(texto)
+    partes, buf = [], ""
+    for linea in texto.split("\n"):
+        if len(buf) + len(linea) + 1 > 3800:
+            partes.append(buf); buf = ""
+        buf += linea + "\n"
+    if buf.strip():
+        partes.append(buf)
+    for p in partes:
+        try:
+            bot.send_message(chat_id, p, parse_mode="Markdown")
+        except Exception:
+            bot.send_message(chat_id, p.replace("*", "").replace("`", ""))
+
+
+def _responder_con_agente(bot, message, texto):
+    chat_id = message.chat.id
+    if str(chat_id) not in _chats_autorizados():
+        bot.reply_to(message, f"🔒 Este chat no está autorizado para consultas.\nPide al administrador que agregue este ID: {chat_id}")
+        return
+    if _bot_username:
+        texto = re.sub(rf"@{re.escape(_bot_username)}", "", texto, flags=re.IGNORECASE).strip()
+    if not texto:
+        return
+    try:
+        agente.verificar_limites(chat_id)
+    except agente.LimiteExcedido as e:
+        bot.reply_to(message, f"⏳ {e}")
+        return
+    # Mantener el indicador "escribiendo…" mientras el agente consulta (Telegram lo apaga a los ~5 s)
+    import threading
+    listo = threading.Event()
+    def _escribiendo():
+        while not listo.is_set():
+            try:
+                bot.send_chat_action(chat_id, "typing")
+            except Exception:
+                pass
+            listo.wait(4)
+    threading.Thread(target=_escribiendo, daemon=True).start()
+    try:
+        respuesta, adjuntos = agente.responder(chat_id, texto)
+        listo.set()
+        _enviar_largo(bot, chat_id, respuesta or "No tengo respuesta.")
+        for a in adjuntos:
+            from reporte import reporte_excel
+            r = reporte_excel(a["desde"], a["hasta"], a.get("turno"))
+            nombre = f"Reporte_Produccion_{a['desde']}_{a['hasta']}.xlsx"
+            bot.send_document(chat_id, (nombre, r.body))
+    except Exception as e:
+        listo.set()
+        print(f"[agente] Error: {e}")
+        bot.send_message(chat_id, agente.error_amigable(e))
+    finally:
+        listo.set()
 from reporter import get_current_shift_info, get_production_data, format_telegram_message, generate_excel_bytes
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -501,6 +591,19 @@ if token:
         text    = (message.text or "").strip().lower()
         chat_id = message.chat.id
 
+        # ── Comandos de control ───────────────────────────────────────────────
+        cmd = text.split("@")[0]
+        if cmd == "/id":
+            bot.reply_to(message, f"ID de este chat: {chat_id}")
+            return
+        if cmd in ("/nuevo", "/reset"):
+            agente.olvidar(chat_id)
+            bot.reply_to(message, "🧹 Conversación reiniciada.")
+            return
+        if cmd in ("/start", "/ayuda", "/help", "ayuda"):
+            _ayuda(bot, chat_id)
+            return
+
         # ── Comando manual: "entrada ETQ-..." / "salida ETQ-..." / "entrada MCZ..."
         match_cmd = re.match(r'^(entrada|salida)\s+([A-Za-z0-9_\-]+)$', text.strip())
         if match_cmd:
@@ -625,7 +728,13 @@ if token:
             _pending_part.pop(chat_id, None)
             return
 
-        # ── Búsqueda de pieza específica ──────────────────────────────────────
+        # ── Agente: cualquier otra pregunta en lenguaje natural ───────────────
+        if agente.activo():
+            if _me_hablan(bot, message):
+                _responder_con_agente(bot, message, (message.text or "").strip())
+            return
+
+        # ── (Sin agente configurado) Búsqueda de pieza específica ─────────────
         match_part = re.search(r'pieza(?:s)?\s+(?:de\s+)?([a-zA-Z0-9_-]+)', text)
         if match_part:
             part_num = match_part.group(1).upper()
@@ -693,25 +802,35 @@ if token:
                 bot.reply_to(message, "Error consultando el cuarto de secado.")
             return
 
-        # ── Ayuda ─────────────────────────────────────────────────────────────
-        bot.send_message(chat_id,
-            "🤖 *Comandos disponibles:*\n\n"
-            "📷 *Foto de etiqueta* + caption `entrada` → Registrar entrada\n"
-            "📷 *Foto de etiqueta* + caption `salida`  → Registrar salida\n"
-            "📷 *Solo foto* → El bot lee el QR (o el texto si el QR está borroso)\n\n"
-            "✏️ *Registro manual (si la foto no funciona):*\n"
-            "• `entrada MCZ60014601` → Entrada manual por número de parte\n"
-            "• `salida MCZ60014601`  → Salida manual por número de parte\n\n"
-            "💬 *Consultas:*\n"
-            "• `reporte de producción` → Reporte del turno actual\n"
-            "• `piezas de [NUM_PARTE]` → Consulta específica de una parte\n"
-            "• `cuarto de secado` → Ver carritos activos en este momento",
-            parse_mode="Markdown")
+        _ayuda(bot, chat_id)
+
+
+def _ayuda(bot, chat_id):
+    extra = ("💬 *Pregúntame lo que quieras de producción*, por ejemplo:\n"
+             "• ¿Cómo vamos en este turno?\n"
+             "• ¿Qué máquina tuvo más paro ayer en la noche?\n"
+             "• ¿Cuánto llevamos de MFZ67190201 esta semana?\n"
+             "• ¿Qué carritos llevan más de una hora en secado?\n"
+             "• ¿Qué máquinas faltan de capturar en este turno?\n"
+             "• Mándame el Excel del reporte de ayer\n"
+             "/nuevo reinicia la conversación · /id muestra el ID del chat\n\n") if agente.activo() else (
+             "💬 *Consultas:*\n"
+             "• `reporte de producción` → Reporte del turno actual\n"
+             "• `piezas de [NUM_PARTE]` → Consulta específica de una parte\n"
+             "• `cuarto de secado` → Ver carritos activos en este momento\n\n")
+    bot.send_message(chat_id,
+        "🤖 *Asistente de Producción*\n\n" + extra +
+        "📷 *Foto de etiqueta* + texto `entrada` o `salida` → registra el carrito\n"
+        "📷 *Solo foto* → leo el QR y te pregunto qué hacer\n"
+        "✏️ `entrada MFZ62834301` / `salida MFZ62834301` → registro manual",
+        parse_mode="Markdown")
 
 
 def start_bot():
     """Inicia el bot en modo polling infinito."""
     if bot:
+        prov = agente.proveedor()
+        print(f"[agente] Asistente IA: {'ACTIVO con ' + prov if prov else 'desactivado (sin clave en .env)'}")
         print("Iniciando escucha activa de Telegram (con soporte de fotos QR + OCR)...")
         bot.infinity_polling()
     else:
