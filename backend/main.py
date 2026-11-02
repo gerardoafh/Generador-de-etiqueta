@@ -26,6 +26,8 @@ import string
 import re
 from telegram_bot import start_bot
 from qr_parse import parse_qr_texts, fill_from_labels_db, find_cart_for_exit
+from reporte import router as reporte_router, registrar_en_log
+from typing import Optional
 
 scheduler = BackgroundScheduler()
 
@@ -46,6 +48,7 @@ async def lifespan(app: FastAPI):
     scheduler.shutdown()
 
 app = FastAPI(title="API Sistema de Etiquetas", lifespan=lifespan)
+app.include_router(reporte_router)
 
 # --- Configuración CORS ---
 app.add_middleware(
@@ -86,6 +89,7 @@ class PrintQueueItem(BaseModel):
     desc: str
     qty: int
     turno: str
+    maquina: Optional[str] = None   # máquina elegida al imprimir (ej. "10")
 
 # --- ENDPOINTS COLA DE TELEGRAM ---
 TELEGRAM_QUEUE_FILE = os.path.join(BASE_DIR, 'telegram_queue.json')
@@ -314,6 +318,8 @@ class GeneradorEtiquetas:
         # ════════════════════════════════════════════════════════════════════
         if label_type == "eps" and cart_number is not None:
             machine_name = f"Cartón: {cart_number}"
+        elif part_info.get('_maquina'):
+            machine_name = f"MÁQUINA {part_info['_maquina']}"
         else:
             machine_name = part_info.get('linea', '').strip().upper()
 
@@ -350,7 +356,7 @@ class GeneradorEtiquetas:
                    f"Description: {part_info.get('descripcion', '')}\n"
                    f"Qty: {cantidad_por_etiqueta}\n"
                    f"ID Catálogo: {part_info.get('id', '')}\n"
-                   f"Línea: {part_info.get('linea', '')}")
+                   f"Máquina: {part_info.get('_maquina') or part_info.get('linea', '')}")
         qr2_y = ctn_y + 0.08 * reportlab_inch
         self._generar_qr_code(c, qr_full, qr_cx, qr2_y, qr_size)
 
@@ -568,6 +574,9 @@ def generate_pdf(queue: list[PrintQueueItem]):
             if not part_info: continue
 
             qty_on_label = part_info.get('qtu', '0')
+            maq = (item.maquina or '').strip()
+            if maq:
+                part_info = {**part_info, '_maquina': maq}
 
             for _ in range(num_labels_for_part):
                 unique_label_id = f"ETQ-{datetime.now().strftime('%y%m%d')}-{''.join(random.choices(string.ascii_uppercase + string.digits, k=5))}"
@@ -577,6 +586,7 @@ def generate_pdf(queue: list[PrintQueueItem]):
                     "descripcion": part_info.get('descripcion', ''),
                     "qty": int(qty_on_label) if str(qty_on_label).isdigit() else 0,
                     "linea": part_info.get('linea', ''),
+                    "maquina": int(maq) if maq.isdigit() else None,
                     "cliente": part_info.get('linea_lg', ''),
                     "turno": turno,
                     "fecha": fecha_str,
@@ -666,7 +676,7 @@ def register_camera_scan(payload: CameraScanPayload):
             "idCarrito": carrito_id,
             "numeroParte": part_number,
             "descripcion": part_info.get('descripcion', '') if part_info else '',
-            "maquina": part_info.get('linea', '') if part_info else '',
+            "maquina": (f"maquina {lbl_info['maquina']}" if lbl_info and lbl_info.get('maquina') else (part_info.get('linea', '') if part_info else '')),
             "qty": qty,
             "acumulado": prev_acumulado,
             "turno": shift_name,
@@ -687,7 +697,7 @@ def register_camera_scan(payload: CameraScanPayload):
         
         with open(DRYING_FILE, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=4, ensure_ascii=False)
-            
+        registrar_en_log([new_record])
         return {"message": "Entrada registrada", "record": new_record}
 
     elif payload.action == 'salida':
@@ -705,7 +715,7 @@ def register_camera_scan(payload: CameraScanPayload):
         
         with open(DRYING_FILE, 'w', encoding='utf-8') as f:
             json.dump(state, f, indent=4, ensure_ascii=False)
-            
+        registrar_en_log([target])
         return {"message": "Salida registrada", "record": target}
 
     raise HTTPException(status_code=400, detail="Acción inválida. Usa 'entrada' o 'salida'.")
@@ -732,6 +742,10 @@ def update_drying_state(state: DryingState):
         if not r.get('horaEntrada') or r.get('horaEntrada', '') >= cutoff or r.get('estado') == 'EN SECADO'
     ]
     state.records = filtered_records
+    try:
+        registrar_en_log(state.records)
+    except Exception as e:
+        print(f"[reporte] Error registrando en log: {e}")
 
     with open(DRYING_FILE, 'w', encoding='utf-8') as f:
         json.dump(state.model_dump(), f, indent=4, ensure_ascii=False)

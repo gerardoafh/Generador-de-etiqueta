@@ -249,7 +249,7 @@ export default function MainMenu({ setView }) {
           <h2 className="text-xl font-bold text-slate-800 mb-6 flex items-center gap-2">
             <span className="text-blue-500">⚡</span> Módulos del Sistema
           </h2>
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-5 gap-6">
 
             <div onClick={() => setView('parts')} className="bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-slate-100 hover:border-blue-300 transition-all duration-300 cursor-pointer group flex flex-col h-full">
               <div className="w-14 h-14 bg-blue-50 text-blue-600 rounded-2xl flex items-center justify-center text-2xl mb-6 group-hover:scale-110 group-hover:bg-blue-600 group-hover:text-white transition-all">⚙️</div>
@@ -272,10 +272,17 @@ export default function MainMenu({ setView }) {
               <div className="text-orange-600 font-semibold text-sm flex items-center gap-2 group-hover:translate-x-2 transition-transform">Acceder al módulo <span>→</span></div>
             </div>
 
+            <div onClick={() => setView('captura')} className="bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-slate-100 hover:border-teal-300 transition-all duration-300 cursor-pointer group flex flex-col h-full">
+              <div className="w-14 h-14 bg-teal-50 text-teal-600 rounded-2xl flex items-center justify-center text-2xl mb-6 group-hover:scale-110 group-hover:bg-teal-600 group-hover:text-white transition-all">📝</div>
+              <h3 className="text-lg font-bold text-slate-800 mb-2">Captura de Turno</h3>
+              <p className="text-slate-500 text-sm flex-grow mb-6">Horas, paros, scrap y ciclo real por máquina para el reporte.</p>
+              <div className="text-teal-600 font-semibold text-sm flex items-center gap-2 group-hover:translate-x-2 transition-transform">Acceder al módulo <span>→</span></div>
+            </div>
+
             <div onClick={() => setView('report')} className="bg-white rounded-3xl p-6 shadow-sm hover:shadow-xl border border-slate-100 hover:border-purple-300 transition-all duration-300 cursor-pointer group flex flex-col h-full">
               <div className="w-14 h-14 bg-purple-50 text-purple-600 rounded-2xl flex items-center justify-center text-2xl mb-6 group-hover:scale-110 group-hover:bg-purple-600 group-hover:text-white transition-all">📊</div>
               <h3 className="text-lg font-bold text-slate-800 mb-2">Reporte de Prod.</h3>
-              <p className="text-slate-500 text-sm flex-grow mb-6">Analiza y exporta la cantidad de piezas procesadas por turno.</p>
+              <p className="text-slate-500 text-sm flex-grow mb-6">Meta vs resultado, scrap y paros por turno y máquina; exporta al Excel mensual.</p>
               <div className="text-purple-600 font-semibold text-sm flex items-center gap-2 group-hover:translate-x-2 transition-transform">Acceder al módulo <span>→</span></div>
             </div>
 

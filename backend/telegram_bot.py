@@ -15,6 +15,7 @@ from pyzbar.pyzbar import decode as qr_decode
 from dotenv import load_dotenv
 
 from qr_parse import parse_qr_texts, fill_from_labels_db, find_cart_for_exit, LABEL_ID_RE
+from reporte import registrar_en_log
 from reporter import get_current_shift_info, get_production_data, format_telegram_message, generate_excel_bytes
 
 base_dir = os.path.dirname(os.path.abspath(__file__))
@@ -58,6 +59,11 @@ def _load_json(path: str) -> dict:
 def _save_json(path: str, data: dict):
     with open(path, 'w', encoding='utf-8') as f:
         json.dump(data, f, indent=4, ensure_ascii=False)
+
+
+def _maquina_de_etiqueta(label_id):
+    lbl = _load_json(LABELS_FILE).get(label_id) if label_id else None
+    return f"maquina {lbl['maquina']}" if lbl and lbl.get('maquina') else None
 
 
 def _gen_id() -> str:
@@ -291,7 +297,7 @@ def _registrar_entrada(part_number: str, part_info: dict, qty: int, label_id: st
         "idCarrito":    carrito_id,
         "numeroParte":  part_number,
         "descripcion":  part_info.get('descripcion', ''),
-        "maquina":      part_info.get('linea', ''),
+        "maquina":      _maquina_de_etiqueta(label_id) or part_info.get('linea', ''),
         "qty":          qty,
         "acumulado":    prev_acumulado,
         "turno":        shift_name,
@@ -312,6 +318,7 @@ def _registrar_entrada(part_number: str, part_info: dict, qty: int, label_id: st
     state['turnoActual']       = shift_name
 
     _save_json(DRYING_FILE, state)
+    registrar_en_log([new_record])
     _push_to_telegram_queue(part_number, 'ENTRADA')
     return new_record, "OK"
 
@@ -334,6 +341,7 @@ def _registrar_salida(part_number: str | None, label_id: str | None = None) -> t
     target['tiempoMinutos'] = minutos
 
     _save_json(DRYING_FILE, state)
+    registrar_en_log([target])
     _push_to_telegram_queue(target.get('numeroParte', ''), 'SALIDA')
     return target, "OK"
 

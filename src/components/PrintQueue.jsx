@@ -17,6 +17,7 @@ export default function PrintQueue({ goBack }) {
   const [selectedPart, setSelectedPart] = useState('');
   const [addQty, setAddQty] = useState(1);
   const [addTurno, setAddTurno] = useState('Día');
+  const [addMaquina, setAddMaquina] = useState('');
 
   // #7 — Estado de carga para generación de PDF
   const [isGenerating, setIsGenerating] = useState(false);
@@ -77,6 +78,10 @@ export default function PrintQueue({ goBack }) {
       showToast('Por favor selecciona un número de parte.', 'warning');
       return;
     }
+    if (!addMaquina) {
+      showToast('Selecciona la máquina donde se produce la pieza.', 'warning');
+      return;
+    }
     const qty = Number(addQty);
     if (!qty || qty < 1) {
       showToast('La cantidad debe ser mayor o igual a 1.', 'error');
@@ -86,11 +91,12 @@ export default function PrintQueue({ goBack }) {
       part: selectedPart,
       desc: availableParts[selectedPart]?.descripcion || '',
       qty,
-      turno: addTurno
+      turno: addTurno,
+      maquina: addMaquina
     }];
     setQueue(newQueue);
     setAddQty(1); // Resetear cantidad
-    showToast(`Añadido: ${qty}× ${selectedPart} (${addTurno})`, 'success');
+    showToast(`Añadido: ${qty}× ${selectedPart} · Máq. ${addMaquina} (${addTurno})`, 'success');
   };
 
   // #8 — Eliminar ítem individual
@@ -203,6 +209,14 @@ export default function PrintQueue({ goBack }) {
           )}
         </div>
 
+        <div className="w-full md:w-36">
+          <label className="block font-medium text-slate-600 text-sm mb-2">Máquina:</label>
+          <select value={addMaquina} onChange={(e) => setAddMaquina(e.target.value)} className={`w-full bg-slate-50 border text-slate-900 rounded-xl focus:ring-2 focus:ring-blue-500 p-3 outline-none ${addMaquina ? 'border-slate-200' : 'border-amber-400'}`}>
+            <option value="">Elegir…</option>
+            {Array.from({ length: 40 }, (_, i) => i + 1).map(m => <option key={m} value={String(m)}>Máquina {m}</option>)}
+          </select>
+        </div>
+
         <div className="w-full md:w-40">
           <label className="block font-medium text-slate-600 text-sm mb-2">Turno:</label>
           <select value={addTurno} onChange={(e) => setAddTurno(e.target.value)} className="w-full bg-slate-50 border border-slate-200 text-slate-900 rounded-xl focus:ring-2 focus:ring-blue-500 focus:border-blue-500 p-3 outline-none transition-all">
@@ -228,6 +242,7 @@ export default function PrintQueue({ goBack }) {
               <tr className="bg-slate-50 text-slate-500 uppercase text-xs tracking-wider border-b border-slate-200">
                 <th className="p-5 font-medium">Número de Parte</th>
                 <th className="p-5 font-medium text-left">Descripción</th>
+                <th className="p-5 font-medium text-center">Máquina</th>
                 <th className="p-5 font-medium text-center">Cantidad</th>
                 <th className="p-5 font-medium">Turno</th>
                 {/* #8 — Columna de eliminar */}
@@ -239,6 +254,7 @@ export default function PrintQueue({ goBack }) {
                 <tr key={idx} className="hover:bg-slate-50 transition-colors group">
                   <td className="p-5 font-semibold text-slate-800 font-mono">{item.part}</td>
                   <td className="p-5 text-slate-600 text-sm">{item.desc}</td>
+                  <td className="p-5 text-center font-bold text-slate-700">{item.maquina || <span className="text-amber-600 text-xs">sin máquina</span>}</td>
                   <td className="p-5 text-center font-bold text-blue-600">{item.qty}</td>
                   <td className="p-5">
                     <span className={`px-3 py-1 rounded-full text-xs font-bold ${item.turno === 'Día' ? 'bg-blue-100 text-blue-700' : 'bg-indigo-100 text-indigo-700'}`}>
@@ -259,7 +275,7 @@ export default function PrintQueue({ goBack }) {
               ))}
               {queue.length === 0 && (
                 <tr>
-                  <td colSpan="5" className="p-12 text-center text-slate-400">La cola está vacía. Añade partes arriba.</td>
+                  <td colSpan="6" className="p-12 text-center text-slate-400">La cola está vacía. Añade partes arriba.</td>
                 </tr>
               )}
             </tbody>
