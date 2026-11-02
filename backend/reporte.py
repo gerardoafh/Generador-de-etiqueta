@@ -193,8 +193,18 @@ async def importar_bom(file: UploadFile = File(...)):
     """Importa la hoja BOM del Excel de producción (encabezado 'NO. PARTE' en col D)."""
     import openpyxl
     data = await file.read()
-    if len(data) > 40 * 1024 * 1024:
-        raise HTTPException(400, "Archivo demasiado grande (máx. 40 MB).")
+    if file.filename and file.filename.lower().endswith(".json"):
+        try:
+            out = {str(k).strip().upper(): v for k, v in json.loads(data).items()}
+        except Exception as e:
+            raise HTTPException(400, f"JSON inválido: {e}")
+        with _lock:
+            _save(BOM_FILE, out)
+        return {"message": f"BOM importado: {len(out)} números de parte.", "total": len(out)}
+    # El servidor tiene poca RAM: un libro completo de producción (7+ MB, 100+ hojas) lo tumba.
+    if len(data) > 2 * 1024 * 1024:
+        raise HTTPException(400, "Archivo muy grande para el servidor. En Excel: clic derecho en la hoja BOM → "
+                                 "Mover o copiar → (nuevo libro) → Crear una copia, guárdalo y sube ese archivo.")
     try:
         wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     except Exception as e:

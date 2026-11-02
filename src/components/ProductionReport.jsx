@@ -105,14 +105,14 @@ export default function ProductionReport({ goBack }) {
             <button onClick={() => cargar()} className="bg-purple-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-purple-700">{cargando ? '…' : 'Consultar'}</button>
             <button onClick={descargarExcel} className="bg-green-600 text-white px-4 py-2 rounded-lg font-semibold hover:bg-green-700">⬇ Excel (formato mensual)</button>
             <button onClick={() => fileRef.current?.click()} className="bg-white border border-slate-300 text-slate-700 px-4 py-2 rounded-lg font-semibold hover:bg-slate-50">Importar BOM</button>
-            <input ref={fileRef} type="file" accept=".xlsx,.xlsm" className="hidden" onChange={importarBom} />
+            <input ref={fileRef} type="file" accept=".xlsx,.xlsm,.json" className="hidden" onChange={importarBom} />
             <button onClick={() => goBack()} className="bg-slate-100 text-slate-600 hover:bg-slate-200 px-4 py-2 rounded-lg font-semibold">Volver</button>
           </div>
         </div>
 
         {bomTotal === 0 && (
           <div className="mb-6 p-4 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-sm">
-            Aún no hay BOM cargado: sin él no hay peso, ciclo ni cavidades y la meta sale en 0. Usa <b>Importar BOM</b> con tu Excel de producción (hoja "BOM").
+            Aún no hay BOM cargado: sin él no hay peso, ciclo ni cavidades y la meta sale en 0. Usa <b>Importar BOM</b> con un Excel que tenga solo la hoja "BOM" (clic derecho en la hoja → Mover o copiar → nuevo libro).
           </div>
         )}
 
