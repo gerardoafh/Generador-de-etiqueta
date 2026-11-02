@@ -190,7 +190,7 @@ def _num(v):
 
 @router.post("/bom/import")
 async def importar_bom(file: UploadFile = File(...)):
-    """Importa la hoja BOM del Excel de producción (encabezado 'NO. PARTE' en col D)."""
+    """Importa el BOM: hoja 'BOM' o la primera hoja con encabezado 'NO. PARTE' en la columna D."""
     import openpyxl
     data = await file.read()
     if file.filename and file.filename.lower().endswith(".json"):
@@ -209,9 +209,15 @@ async def importar_bom(file: UploadFile = File(...)):
         wb = openpyxl.load_workbook(io.BytesIO(data), data_only=True, read_only=True)
     except Exception as e:
         raise HTTPException(400, f"No se pudo leer el Excel: {e}")
-    ws = wb["BOM"] if "BOM" in wb.sheetnames else None
+    def _tiene_encabezado(hoja):
+        for i, r in enumerate(hoja.iter_rows(max_row=30, max_col=6, values_only=True)):
+            if len(r) > 3 and str(r[3] or "").strip().upper() in ("NO. PARTE", "품번"):
+                return True
+        return False
+    hojas = (["BOM"] if "BOM" in wb.sheetnames else []) + [n for n in wb.sheetnames if n != "BOM"]
+    ws = next((wb[n] for n in hojas if _tiene_encabezado(wb[n])), None)
     if ws is None:
-        raise HTTPException(400, "El archivo no tiene una hoja llamada 'BOM'.")
+        raise HTTPException(400, "No encontré una hoja con el encabezado 'NO. PARTE' en la columna D.")
     out = {}
     header_found = False
     for row in ws.iter_rows(values_only=True):
